@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'ArkPixel';
+  src: url('/assets/fonts/ark-pixel-12px-proportional-zh_cn.ttf.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+}
+
+body {
+  font-family: 'ArkPixel', monospace;
+}

@@ -1,0 +1,5 @@
+- [x] 任务 1：初始化项目结构 (Project Setup)
+- [x] 任务 2：实现核心布局 (Civilian System)
+- [x] 任务 3：搭建 Phaser 游戏 (Military System)
+- [x] 任务 4：实现角色逻辑 (Agent Logic)
+- [x] 任务 5：状态管理桥梁 (The Bridge)
