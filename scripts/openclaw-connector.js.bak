@@ -1,0 +1,131 @@
+import fs from 'fs';
+import path from 'path';
+import { io } from 'socket.io-client';
+
+// 配置
+const RELAY_SERVER_URL = process.env.RELAY_URL || 'http://localhost:3001';
+const STATE_FILE_PATH = process.env.STATE_FILE || path.join(process.cwd(), 'state.json');
+const AGENT_ID = process.env.AGENT_ID || 'minister';
+const OPENCLAW_API_URL = process.env.OPENCLAW_API_URL || 'http://localhost:18791/status';
+const JOIN_KEY = process.env.JOIN_KEY || 'mandate_of_heaven';
+
+// 归一化逻辑 (Client-Side Normalization)
+function normalizeState(rawState) {
+  const s = (rawState || '').toLowerCase();
+  
+  if (['writing', 'busy', 'executing', 'running', 'syncing', 'researching', 'working'].includes(s)) {
+    return 'working';
+  }
+  if (['error', 'bug', 'failed', 'alert'].includes(s)) {
+    return 'error';
+  }
+  if (['thinking', 'planning', 'moving'].includes(s)) {
+    return 'moving';
+  }
+  if (['offline', 'disconnected'].includes(s)) {
+    return 'offline';
+  }
+  // Default to idle
+  return 'idle';
+}
+
+console.log(`[Connector] Starting...`);
+console.log(`[Connector] Agent ID: ${AGENT_ID}`);
+console.log(`[Connector] Target Server: ${RELAY_SERVER_URL}`);
+
+// 建立 Socket 连接
+const socket = io(RELAY_SERVER_URL, {
+  auth: { token: JOIN_KEY } // 虽然 Server 端目前是手动 check，但标准做法可以放在 auth
+});
+
+socket.on('connect', () => {
+  console.log(`[Connector] Connected to Relay Server (${socket.id})`);
+  
+  // 注册身份 (携带鉴权 Key)
+  socket.emit('register', { type: 'agent', id: AGENT_ID, joinKey: JOIN_KEY });
+  
+  // 立即探测一次
+  detectAndReport();
+});
+
+socket.on('auth_error', (data) => {
+  console.error(`[Connector] Auth Error: ${data.message}`);
+  process.exit(1);
+});
+
+socket.on('disconnect', () => {
+  console.log(`[Connector] Disconnected from Relay Server`);
+});
+
+socket.on('command', (data) => {
+  console.log(`[Connector] RECEIVED COMMAND: ${data.action}`, data.payload);
+});
+
+// 多源探测逻辑 (File -> API -> Default)
+async function detectAndReport() {
+  let rawState = 'idle';
+  let detail = '';
+  let source = 'none';
+
+  // 1. 尝试读取文件
+  try {
+    if (fs.existsSync(STATE_FILE_PATH)) {
+      const data = fs.readFileSync(STATE_FILE_PATH, 'utf-8');
+      const json = JSON.parse(data);
+      rawState = json.state;
+      detail = json.detail || json.message;
+      source = 'file';
+    }
+  } catch (e) {
+    // File read error, ignore and try next source
+  }
+
+  // 2. 如果文件没读到或状态无效，尝试调 API (这里用 fetch 模拟)
+  if (source === 'none' && OPENCLAW_API_URL) {
+    try {
+      // 注意：Node 18+ 原生支持 fetch
+      const res = await fetch(OPENCLAW_API_URL);
+      if (res.ok) {
+        const json = await res.json();
+        rawState = json.status || json.state;
+        detail = json.detail || '';
+        source = 'api';
+      }
+    } catch (e) {
+      // API error
+    }
+  }
+
+  // 3. 归一化
+  const normalizedStatus = normalizeState(rawState);
+
+  // 4. 上报
+  if (socket.connected) {
+    const payload = {
+      id: AGENT_ID,
+      status: normalizedStatus,
+      message: detail || (normalizedStatus === 'idle' ? '待命' : '工作中...'),
+      originalState: rawState,
+      source: source
+    };
+    socket.emit('report', payload);
+    console.log(`[Connector] Reported [${source}]: ${normalizedStatus} (${rawState})`);
+  }
+}
+
+// 启动定时探测 (代替 fs.watch，因为要兼顾 API)
+setInterval(detectAndReport, 2000);
+
+// 监听文件变化 (为了更实时，保留 watch 作为触发器)
+try {
+  if (fs.existsSync(STATE_FILE_PATH)) {
+      fs.watchFile(STATE_FILE_PATH, { interval: 1000 }, (curr, prev) => {
+          if (curr.mtime !== prev.mtime) {
+              console.log(`[Connector] File changed, triggering immediate report...`);
+              detectAndReport();
+          }
+      });
+  }
+} catch (e) {
+  console.warn(`[Connector] Watch file failed: ${e.message}`);
+}

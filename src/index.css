@@ -9,6 +9,96 @@
   font-style: normal;
 }
 
+@layer utilities {
+  /* Existing Pixel Borders - Kept for retro feel if needed */
+  .pixel-border {
+    box-shadow: 
+      -2px 0 0 0 #000,
+      2px 0 0 0 #000,
+      0 -2px 0 0 #000,
+      0 2px 0 0 #000;
+  }
+
+  /* Neo-Imperial Palette */
+  :root {
+    --color-imperial-red: #2c0b0e;
+    --color-imperial-red-light: #551212;
+    --color-imperial-gold: #d4af37;
+    --color-imperial-gold-dim: #8a7338;
+    --color-jade: #4d7c5e;
+    --color-ink: #1a0f0f;
+    --color-parchment: #e6d5ac;
+    --color-parchment-light: #fffdf5;
+  }
+
+  /* Glassmorphism Classes */
+  .glass-panel {
+    background: rgba(26, 15, 15, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(212, 175, 55, 0.2);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+
+  .glass-panel-light {
+    background: rgba(255, 253, 245, 0.9);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(141, 110, 99, 0.2);
+  }
+
+  /* Textures */
+  .texture-wood {
+    background-color: #1a0f0f;
+    background-image: url("https://www.transparenttextures.com/patterns/wood-pattern.png");
+    background-blend-mode: soft-light;
+  }
+
+  .texture-paper {
+    background-color: #fffdf5;
+    background-image: url("https://www.transparenttextures.com/patterns/cream-paper.png");
+  }
+
+  /* Gold Gradients */
+  .text-gradient-gold {
+    background: linear-gradient(to bottom, #f3e5ab, #d4af37, #8a7338);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    color: transparent;
+  }
+  
+  .border-gradient-gold {
+    border-image: linear-gradient(to bottom, #f3e5ab, #d4af37, #8a7338) 1;
+  }
+
+  /* Scrollbars */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(0,0,0,0.1);
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(141, 110, 99, 0.5);
+    border-radius: 3px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(141, 110, 99, 0.8);
+  }
+}
+
+html, body, #root {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  min-height: 100%;
+}
+
 body {
   font-family: 'ArkPixel', monospace;
+  image-rendering: pixelated;
+  background-color: #111827; /* gray-900 to match app */
 }

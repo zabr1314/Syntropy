@@ -1,0 +1,16 @@
+{
+    "system": {
+        "version": "1.0.0",
+        "port": 3001,
+        "max_history": 30
+    },
+    "llm": {
+        "default_model": "gpt-4o",
+        "timeout_ms": 60000,
+        "max_tokens": 4096
+    },
+    "storage": {
+        "type": "jsonl",
+        "path": "./data"
+    }
+}

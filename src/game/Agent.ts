@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import SpeechBubble from './SpeechBubble';
 import { PathfindingManager } from './PathfindingManager';
+import { type AgentConfig } from '../constants/agentConfig';
 
 interface SceneWithPathfinding extends Phaser.Scene {
     pathfindingManager?: PathfindingManager;
@@ -14,12 +15,18 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
     private _targetX: number | null = null;
     private _targetY: number | null = null;
     private readonly SPEED: number = 200;
+    
+    // Config properties
+    private config: AgentConfig;
     private bubble: SpeechBubble;
+    
     private path: {x: number, y: number}[] = [];
     private currentPathTarget: {x: number, y: number} | null = null;
+    private nameTag!: Phaser.GameObjects.Container;
 
-    constructor(scene: Phaser.Scene, x: number, y: number, texture: string) {
+    constructor(scene: Phaser.Scene, x: number, y: number, texture: string, config: AgentConfig) {
         super(scene, x, y, texture);
+        this.config = config;
         
         // 调试信息：输出纹理是否加载成功
         if (!scene.textures.exists(texture)) {
@@ -36,45 +43,148 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
         this.setCollideWorldBounds(true);
         this.setDepth(100); // 确保在最上层
 
-        // 创建气泡
-        this.bubble = new SpeechBubble(scene, x, y - 40); // 调整气泡高度
+        // 应用缩放配置
+        this.setScale(this.config.scale);
 
-        // 放大 Sprite
-        this.setScale(3); // 放大到 3 倍
+        // 创建气泡
+        this.bubble = new SpeechBubble(scene, x, y - this.config.bubbleOffsetY);
+
+        // 创建铭牌
+        this.createNameTag(scene);
         
         // 播放 idle 动画作为默认状态
-        if (this.anims.exists('idle')) {
-            this.play('idle');
-        } else {
-            // 如果没有动画，至少设置第一帧
-            this.setFrame(0);
-        }
+        this.playIdleAnimation();
     }
 
-    say(message: string, duration: number = 2000) {
-        this.bubble.show(message, duration);
+    private createNameTag(scene: Phaser.Scene) {
+        // 创建容器
+        // 初始位置，preUpdate 会每帧更新
+        this.nameTag = scene.add.container(this.x, this.y + 45 + this.config.nameTagOffsetY);
+        this.nameTag.setDepth(200); // 确保在 Agent 之上
+
+        // 创建背景 (圆角矩形)
+        const bg = scene.add.graphics();
+        
+        // 创建文字
+        const text = scene.add.text(0, 0, this.config.name, {
+            fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
+            fontSize: '12px',
+            color: '#ffffff',
+            align: 'center',
+            fontStyle: 'bold'
+        });
+        text.setResolution(3); // 再次提高清晰度，解决模糊问题
+        text.setOrigin(0.5, 0.5);
+
+        // 动态计算背景大小
+        const paddingX = 8;
+        const paddingY = 4;
+        const width = text.width + paddingX * 2;
+        const height = text.height + paddingY * 2;
+        
+        // 绘制背景：极简风格，无边框，更淡的黑色背景
+        bg.fillStyle(0x000000, 0.5); // 0.5 透明度
+        bg.fillRoundedRect(-width/2, -height/2, width, height, 8); // 略微减小圆角
+
+        this.nameTag.add(bg);
+        this.nameTag.add(text);
+    }
+
+    private currentMessage: string | null = null;
+    private currentPriority: 'low' | 'high' = 'low';
+
+    say(message: string, duration: number = 2000, priority: 'low' | 'high' = 'low') {
+        // 如果当前有高优先级消息正在显示，且新消息是低优先级的，则忽略新消息
+        if (this.currentPriority === 'high' && priority === 'low' && this.bubble.visible) {
+            return;
+        }
+
+        // 如果消息没有变化，且气泡正在显示，则忽略
+        if (this.currentMessage === message && this.bubble.visible) {
+            return;
+        }
+        
+        // 动态计算持续时间：每 5 个字 1 秒，最少 2 秒，最多 10 秒
+        // 如果是高优先级消息，稍微延长时间
+        const baseDuration = Math.max(2000, Math.min(10000, (message.length / 5) * 1000));
+        const finalDuration = priority === 'high' ? baseDuration + 2000 : duration;
+
+        this.currentMessage = message;
+        this.currentPriority = priority;
+        this.bubble.show(message, finalDuration);
+    }
+
+    private workTween: Phaser.Tweens.Tween | null = null;
+
+    forceStop() {
+        this.path = [];
+        this.currentPathTarget = null;
+        this._targetX = null;
+        this._targetY = null;
+        this.body?.reset(this.x, this.y);
+        this.stop();
+        this.stopWorkAnimation();
+        this.playIdleAnimation();
+    }
+
+    playWorkAnimation() {
+        if (this.workTween && this.workTween.isPlaying()) return;
+        
+        // 弹性工作动画 (Squash and Stretch)
+        const currentScale = this.config.scale;
+        
+        this.workTween = this.scene.tweens.add({
+            targets: this,
+            y: this.y - 5,
+            scaleY: currentScale * 1.05, // 稍微拉长
+            scaleX: currentScale * 0.95, // 稍微变窄
+            duration: 300,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+        });
+    }
+
+    stopWorkAnimation() {
+        if (this.workTween) {
+            this.workTween.stop();
+            this.workTween = null;
+        }
+        // 强制重置缩放
+        this.setScale(this.config.scale);
     }
 
     async moveTo(x: number, y: number) {
-        console.log(`Agent requesting move to: ${x}, ${y}`);
+        // console.log(`Agent requesting move to: ${x}, ${y}`);
+        this.stopWorkAnimation(); // 移动时停止工作动画
+        
+        // 启动时的弹性动画 (Jump start)
+        const currentScale = this.config.scale;
+
+        this.scene.tweens.add({
+            targets: this,
+            scaleX: currentScale * 1.1,
+            scaleY: currentScale * 0.9,
+            duration: 100,
+            yoyo: true,
+            ease: 'Quad.out'
+        });
         this._targetX = x;
         this._targetY = y;
         
         const scene = this.scene as SceneWithPathfinding;
         if (scene.pathfindingManager) {
-            console.log('Calculating path...');
+            // console.log('Calculating path...');
             const path = await scene.pathfindingManager.findPath(this.x, this.y, x, y);
             if (path.length > 0) {
-                console.log(`Path found with ${path.length} steps`);
+                // console.log(`Path found with ${path.length} steps`);
                 this.path = path;
-                this.currentPathTarget = this.path.shift() || null; // 取出第一个点 (通常是当前点或非常近的点)
-                // 如果第一个点离自己太近，直接取下一个
+                this.currentPathTarget = this.path.shift() || null; 
                 if (this.currentPathTarget && Phaser.Math.Distance.Between(this.x, this.y, this.currentPathTarget.x, this.currentPathTarget.y) < 10) {
                      this.currentPathTarget = this.path.shift() || null;
                 }
             } else {
                 console.warn('No path found!');
-                // 降级处理：尝试直接移动（可能被卡住）
                 this.path = [];
                 this.currentPathTarget = { x, y };
             }
@@ -85,23 +195,48 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
+    destroy(fromScene?: boolean) {
+        if (this.bubble) {
+            this.bubble.destroy();
+        }
+        if (this.nameTag) {
+            this.nameTag.destroy();
+        }
+        super.destroy(fromScene);
+    }
+
+    // 统一处理移动/停止的动画播放
+    playMoveAnimation() {
+        const animKey = `${this.texture.key}_walk`;
+        if (this.anims.exists(animKey) && !this.anims.isPlaying) {
+            this.play(animKey, true);
+        } else if (this.anims.exists('walk') && !this.anims.isPlaying) {
+            this.play('walk', true);
+        }
+    }
+
+    playIdleAnimation() {
+        const animKey = `${this.texture.key}_idle`;
+        if (this.anims.exists(animKey)) {
+            this.play(animKey, true);
+        } else if (this.anims.exists('idle')) {
+            this.play('idle', true);
+        } else {
+            this.setFrame(0);
+        }
+    }
+
     preUpdate(time: number, delta: number) {
         super.preUpdate(time, delta);
         
         // 气泡跟随
-        this.bubble.setPosition(this.x, this.y - 40);
+        this.bubble.setPosition(this.x, this.y - this.config.bubbleOffsetY);
 
-        // 调试：每隔 60 帧打印一次状态
-        if (this.scene.game.loop.frame % 60 === 0 && (this.path.length > 0 || this.currentPathTarget)) {
-            console.log(`Agent [${this.texture.key}] Moving... Path length: ${this.path.length}`);
+        // 铭牌跟随
+        if (this.nameTag) {
+            this.nameTag.setPosition(this.x, this.y + 45 + this.config.nameTagOffsetY);
+            this.nameTag.setDepth(this.y + 1000); 
         }
-
-        // 调试：绘制红色边框以确认位置
-        // 注意：这非常耗性能，仅用于排查
-        // const debugGraphics = this.scene.add.graphics();
-        // debugGraphics.lineStyle(2, 0xff0000);
-        // debugGraphics.strokeRect(this.x - 16, this.y - 16, 32, 32);
-        // this.scene.time.delayedCall(20, () => debugGraphics.destroy());
 
         // 根据速度翻转 Sprite
         if (this.body && this.body.velocity.x !== 0) {
@@ -125,19 +260,14 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
                     this._targetX = null;
                     this._targetY = null;
                     this.stop();
-                    this.setFrame(0);
-                    if (this.anims.exists('idle')) {
-                        this.play('idle');
-                    }
-                    console.log('Agent reached destination');
+                    this.playIdleAnimation();
+                    // console.log('Agent reached destination');
                 }
             } else {
                 // 继续向当前路点移动
                 if (this.scene && this.scene.physics) {
                     this.scene.physics.moveTo(this, this.currentPathTarget.x, this.currentPathTarget.y, this.SPEED);
-                    if (this.anims.exists('walk') && !this.anims.isPlaying) {
-                        this.play('walk', true);
-                    }
+                    this.playMoveAnimation();
                 }
             }
         } else {
@@ -145,9 +275,7 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
             if (this.body?.velocity.x !== 0 || this.body?.velocity.y !== 0) {
                 this.body?.reset(this.x, this.y);
                 this.stop();
-                if (this.anims.exists('idle')) {
-                    this.play('idle');
-                }
+                this.playIdleAnimation();
             }
         }
     }

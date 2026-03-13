@@ -7,8 +7,6 @@ export class PathfindingManager {
   private grid: number[][] = [];
   private scene: Phaser.Scene;
   private debugGraphics: Phaser.GameObjects.Graphics | null = null;
-  private width: number = 0;
-  private height: number = 0;
 
   constructor(scene: Phaser.Scene, tileSize: number = 32) {
     this.scene = scene;
@@ -19,8 +17,6 @@ export class PathfindingManager {
   }
 
   public initGrid(width: number, height: number) {
-    this.width = width;
-    this.height = height;
     const cols = Math.ceil(width / this.tileSize);
     const rows = Math.ceil(height / this.tileSize);
 
