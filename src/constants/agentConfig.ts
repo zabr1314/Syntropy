@@ -145,8 +145,8 @@ export function getAgentConfig(id: string): AgentConfig {
     return {
         id,
         name: id,
-        texture: 'guest', // 特殊处理 guest texture
-        scale: 3.0, // guest base scale * 1.5 = 2.0 * 1.5 = 3.0
+        texture: 'generic_official', // 降级为 generic_official (因 guest 资源已移除)
+        scale: 2.8, // generic_official 需要较大缩放
         bubbleOffsetY: 80,
         nameTagOffsetY: 10,
         initialPos: LOCATIONS.GUEST_START // 默认起点，实际由 AgentController 计算

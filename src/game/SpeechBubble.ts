@@ -29,6 +29,27 @@ export default class SpeechBubble extends Phaser.GameObjects.Container {
     scene.add.existing(this);
   }
 
+  /**
+   * stream() — for live streaming updates.
+   * Immediately renders the current buffer text without typewriter effect.
+   * Does NOT reset the bubble or restart timers on every chunk.
+   */
+  stream(message: string) {
+    if (!this.scene || !this.scene.sys || !this.scene.sys.isActive() || !this.active) return;
+
+    // Stop any typewriter in progress
+    if (this.typingTimer) {
+      this.typingTimer.remove();
+      this.typingTimer = undefined;
+    }
+    // Stop any fade-out
+    this.scene.tweens.killTweensOf(this);
+    this.setAlpha(1);
+    this.setVisible(true);
+
+    this.renderBubble(message);
+  }
+
   show(message: string, duration: number = 2000) {
     // 检查组件是否活跃
     if (!this.scene || !this.scene.sys || !this.scene.sys.isActive() || !this.active) {
@@ -46,56 +67,26 @@ export default class SpeechBubble extends Phaser.GameObjects.Container {
       this.typingTimer.remove();
       this.typingTimer = undefined;
     }
-    
+
     // 停止之前的淡出动画
     this.scene.tweens.killTweensOf(this);
     this.setAlpha(1);
     this.setVisible(true);
-    
+
     // 初始化文字为空
     this.text.setText('');
     this.text.setVisible(true);
-    
-    // 预先计算最终尺寸 (为了气泡大小正确)
-    const tempText = this.scene.add.text(0, 0, message, this.text.style);
-    const bounds = tempText.getBounds();
-    tempText.destroy();
-    
-    const padding = 8;
-    const width = bounds.width + padding * 2;
-    const height = bounds.height + padding * 2;
 
-    this.bubble.clear();
-    
-    // 像素风格气泡：白色背景，黑色边框
-    this.bubble.fillStyle(0xffffff, 1);
-    this.bubble.lineStyle(2, 0x000000, 1);
-    
-    // 矩形主体 (sharp corners)
-    this.bubble.fillRect(-width / 2, -height - 10, width, height);
-    this.bubble.strokeRect(-width / 2, -height - 10, width, height);
-    
-    // 气泡尖角 (简单的三角形)
-    this.bubble.fillTriangle(0, -10, -6, -10, 0, 0);
-    this.bubble.strokeTriangle(0, -10, -6, -10, 0, 0);
-    // 重新填充以覆盖接缝
-    this.bubble.fillStyle(0xffffff, 1);
-    this.bubble.fillTriangle(-1, -10, -5, -10, 0, -2);
+    this.renderBubble(message);
 
-    // 调整文字位置
-    this.text.setPosition(-width / 2 + padding, -height - 10 + padding);
-    
     // 打字机效果
     let currentChar = 0;
-    // 使用简单的定时器而不是 addEvent，更容易控制
     this.typingTimer = this.scene.time.addEvent({
-        delay: 50, // 打字速度
-        repeat: message.length, // 多跑一次以确保完整显示
+        delay: 50,
+        repeat: message.length,
         callback: () => {
             if (this.text && this.text.active) {
-                // 使用 setText 覆盖而不是 += 追加，防止并发重叠
-                const currentText = message.substring(0, currentChar);
-                this.text.setText(currentText);
+                this.text.setText(message.substring(0, currentChar));
                 currentChar++;
             }
         }
@@ -110,11 +101,37 @@ export default class SpeechBubble extends Phaser.GameObjects.Container {
             alpha: 0,
             duration: 500,
             onComplete: () => {
-            this.setVisible(false);
-            this.text.setText('');
+              this.setVisible(false);
+              this.text.setText('');
             }
         });
       }
     });
+  }
+
+  private renderBubble(message: string) {
+    const padding = 8;
+    // Truncate for display — keep bubble readable
+    const display = message.length > 60 ? '...' + message.slice(-60) : message;
+
+    const tempText = this.scene.add.text(0, 0, display, this.text.style);
+    const bounds = tempText.getBounds();
+    tempText.destroy();
+
+    const width = bounds.width + padding * 2;
+    const height = bounds.height + padding * 2;
+
+    this.bubble.clear();
+    this.bubble.fillStyle(0xffffff, 1);
+    this.bubble.lineStyle(2, 0x000000, 1);
+    this.bubble.fillRect(-width / 2, -height - 10, width, height);
+    this.bubble.strokeRect(-width / 2, -height - 10, width, height);
+    this.bubble.fillTriangle(0, -10, -6, -10, 0, 0);
+    this.bubble.strokeTriangle(0, -10, -6, -10, 0, 0);
+    this.bubble.fillStyle(0xffffff, 1);
+    this.bubble.fillTriangle(-1, -10, -5, -10, 0, -2);
+
+    this.text.setPosition(-width / 2 + padding, -height - 10 + padding);
+    this.text.setText(display);
   }
 }

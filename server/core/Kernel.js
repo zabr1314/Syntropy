@@ -9,12 +9,12 @@ import { CronManager } from '../runtime/CronManager.js';
  * It should NOT contain any specific "game" logic (like Ministers or Emperors).
  */
 export class Kernel {
-    constructor(io) {
+    constructor(io, storage = null) {
         this.io = io; // Socket.io instance
         
         // Initialize Core Components
         this.events = new EventBus();
-        this.session = new Session();
+        this.session = new Session(storage); // Pass storage for persistence
         this.llm = new LLM();
         
         // Registry for Active Agents (Runtime Instances)
@@ -100,11 +100,26 @@ export class Kernel {
             }
         });
 
+        // Forward streaming chunks to frontend
+        this.events.subscribe('agent:stream', (data) => {
+            if (this.io) {
+                this.io.to('frontend').emit('agent_stream', data);
+            }
+        });
+
         // Listen for approval requests
         this.events.subscribe('approval:request', (data) => {
             if (this.io) {
                 console.log(`[Kernel] Broadcasting approval request for ${data.agentId}`);
                 this.io.to('frontend').emit('approval_request', data);
+            }
+        });
+
+        // Broadcast plan preview for parallel dispatch visualization
+        this.events.subscribe(EventBus.EVENTS.AGENT_PLAN, (data) => {
+            if (this.io) {
+                console.log(`[Kernel] Broadcasting plan preview from ${data.from}:`, data.tasks?.map(t => t.official_id));
+                this.io.to('frontend').emit('plan_preview', data);
             }
         });
     }
@@ -165,21 +180,11 @@ export class Kernel {
         }
 
         console.log(`[Kernel] ACP Dispatch: ${message.from} -> ${message.to} [${message.action}]`);
-        
-        // In MVP, we directly invoke execute() with a structured prompt
-        // Ideally, Agents should have a 'receiveMessage' method
-        
-        const prompt = `[System Notification] Message from ${message.from}:
-Type: ${message.type}
-Action: ${message.action}
-Payload: ${JSON.stringify(message.payload)}
 
-Please process this request and respond.`;
-
-        // We execute it as a new turn. 
-        // Note: This might interrupt current thought process if not careful.
-        // For MVP, we assume agents are idle when receiving requests.
-        return await targetAgent.execute(prompt);
+        return await targetAgent.executeAsSubAgent({
+            from: message.from,
+            instruction: message.payload.instruction
+        });
     }
 
     broadcastState(socket) {
@@ -187,7 +192,7 @@ Please process this request and respond.`;
             socket.emit('agent_update', {
                 id: agent.id,
                 status: agent.status || 'idle',
-                message: agent.lastMessage || 'Ready'
+                message: agent.lastMessage || ''
             });
         });
     }

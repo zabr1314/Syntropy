@@ -103,15 +103,20 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
         if (this.currentMessage === message && this.bubble.visible) {
             return;
         }
-        
-        // 动态计算持续时间：每 5 个字 1 秒，最少 2 秒，最多 10 秒
-        // 如果是高优先级消息，稍微延长时间
-        const baseDuration = Math.max(2000, Math.min(10000, (message.length / 5) * 1000));
-        const finalDuration = priority === 'high' ? baseDuration + 2000 : duration;
 
         this.currentMessage = message;
         this.currentPriority = priority;
-        this.bubble.show(message, finalDuration);
+        this.bubble.show(message, duration);
+    }
+
+    /**
+     * streamSay() — called on every streaming chunk.
+     * Immediately renders the latest buffer text without typewriter or timer resets.
+     */
+    streamSay(message: string) {
+        this.currentMessage = message;
+        this.currentPriority = 'high';
+        this.bubble.stream(message);
     }
 
     private workTween: Phaser.Tweens.Tween | null = null;
@@ -130,15 +135,12 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
     playWorkAnimation() {
         if (this.workTween && this.workTween.isPlaying()) return;
         
-        // 弹性工作动画 (Squash and Stretch)
-        const currentScale = this.config.scale;
-        
+        // 沉思/呼吸动画 (Breathing/Bobbing)
+        // 仅在 Y 轴微小浮动，表现专注
         this.workTween = this.scene.tweens.add({
             targets: this,
-            y: this.y - 5,
-            scaleY: currentScale * 1.05, // 稍微拉长
-            scaleX: currentScale * 0.95, // 稍微变窄
-            duration: 300,
+            y: this.y - 2, // 仅上浮 2px
+            duration: 1500, // 缓慢呼吸
             yoyo: true,
             repeat: -1,
             ease: 'Sine.easeInOut'
@@ -158,17 +160,8 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
         // console.log(`Agent requesting move to: ${x}, ${y}`);
         this.stopWorkAnimation(); // 移动时停止工作动画
         
-        // 启动时的弹性动画 (Jump start)
-        const currentScale = this.config.scale;
-
-        this.scene.tweens.add({
-            targets: this,
-            scaleX: currentScale * 1.1,
-            scaleY: currentScale * 0.9,
-            duration: 100,
-            yoyo: true,
-            ease: 'Quad.out'
-        });
+        // 移除启动时的弹性动画 (Jump start) 以符合严肃风格
+        
         this._targetX = x;
         this._targetY = y;
         

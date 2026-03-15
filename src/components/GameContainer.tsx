@@ -14,7 +14,7 @@ const GameContainer: React.FC = () => {
       parent: 'phaser-game-container',
       width: 800,
       height: 600,
-      backgroundColor: '#f0f0f0',
+      backgroundColor: '#000000',
       pixelArt: true, // Enable pixel art mode for crisp rendering
       scene: [MainScene],
       physics: {

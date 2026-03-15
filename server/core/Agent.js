@@ -115,7 +115,7 @@ export class Agent {
      * Called when the agent is registered/waking up
      */
     async onWake() {
-        this.setStatus(AgentState.IDLE, 'Ready');
+        this.setStatus(AgentState.IDLE, '');
         this.metrics.lastActive = Date.now();
     }
 
@@ -223,24 +223,20 @@ export class Agent {
                 // 3. Prepare Context with ContextManager
                 // Merge role-specific tools with global skills (filtered)
                 const globalSkills = this.kernel.skillManager ? this.kernel.skillManager.getAllDefinitions() : [];
-                const allowedSkills = globalSkills.filter(s => this.isSkillAllowed(s.name));
+                // Tool definitions use OpenAI format: { type: 'function', function: { name, ... } }
+                const allowedSkills = globalSkills.filter(s => this.isSkillAllowed(s.function?.name));
                 const allTools = [...this.tools, ...allowedSkills];
 
-                // Get recent history from Memory (using Hybrid Search if relevant, or just recent)
-                // For main loop, we usually want chronological recent history.
-                // However, we can also inject "relevant memories" from vector search here!
-                
-                // Step 3a: Get chronological context
-                const rawHistory = this.memory.getRecent(20); 
-                
+                // Step 3a: Use Session history as the authoritative conversation context.
+                // Session preserves all required API fields (tool_calls, tool_call_id).
+                // memory.getRecent() strips these fields and causes 400 errors.
+                const sessionHistory = await this.kernel.session.getHistory(this.id);
+                const rawHistory = sessionHistory.slice(-20);
+
                 // Step 3b: Retrieve relevant long-term memories (RAG)
-                // Only if input is long enough to be a query
                 let relevantMemories = [];
                 if (turns === 1 && input.length > 5) {
-                     const searchResults = await this.memory.search(input, { limit: 3, useVector: true });
-                     // Filter out recent messages to avoid duplication
-                     const recentIds = new Set(rawHistory.map(m => m.id)); // Assuming getRecent returns IDs or we can infer content match
-                     relevantMemories = searchResults.filter(r => !recentIds.has(r.id));
+                    relevantMemories = await this.memory.search(input, { limit: 3, useVector: true });
                 }
                 
                 // Inject memories into system prompt or as a separate context message?
@@ -263,19 +259,30 @@ export class Agent {
                 
                 const prunedHistory = messages.filter(m => m.role !== 'system');
                 
-                const responseMessage = await this.kernel.llm.chat({
+                const responseMessage = await this.kernel.llm.chatStream({
                     model,
-                    systemPrompt: currentSystemPrompt, 
-                    history: prunedHistory, 
+                    systemPrompt: currentSystemPrompt,
+                    history: prunedHistory,
                     tools: allTools,
-                    temperature: this.runtimeConfig.temperature
+                    temperature: this.runtimeConfig.temperature,
+                    onChunk: (chunk) => {
+                        this.kernel.events.publish('agent:stream', { id: this.id, chunk });
+                    }
                 });
 
-                // Add Assistant Message to Context
+                // Always save the complete assistant message to Session.
+                // This is critical: when the LLM makes tool calls, content is null but
+                // tool_calls must be persisted so subsequent turns have a valid conversation
+                // structure (API requires assistant tool_call → tool result pairing).
                 const content = responseMessage.content || '';
-                // Note: Some LLM responses might be null content if it's a tool call
+                const assistantMsg = { role: 'assistant', content: responseMessage.content || null };
+                if (responseMessage.tool_calls?.length > 0) {
+                    assistantMsg.tool_calls = responseMessage.tool_calls;
+                }
+                await this.kernel.session.addMessage(this.id, assistantMsg);
+
+                // Save text content to long-term memory for future RAG retrieval
                 if (content) {
-                    await this.kernel.session.addMessage(this.id, { role: 'assistant', content });
                     await this.memory.save(`msg_${Date.now()}_a`, content, 'assistant');
                 }
 
@@ -436,6 +443,25 @@ export class Agent {
             
             // Continue execution to let LLM handle rejection
             await this.execute('');
+        }
+    }
+
+    /**
+     * Execute as a sub-agent dispatched by another agent.
+     * Temporarily injects task origin context into the system prompt.
+     */
+    async executeAsSubAgent({ from, instruction }) {
+        const originalPrompt = this.systemPrompt;
+        this.systemPrompt = `${this.systemPrompt}\n\n[任务来源：${from}]`;
+        // Clear stale session history so each sub-agent dispatch starts fresh.
+        // Officials are stateless workers — old tool_call chains cause 400 API errors.
+        if (this.kernel) {
+            await this.kernel.session.clear(this.id);
+        }
+        try {
+            return await this.execute(instruction);
+        } finally {
+            this.systemPrompt = originalPrompt;
         }
     }
 

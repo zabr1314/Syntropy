@@ -9,7 +9,7 @@ import { BACKEND_ID_MAPPING } from '../constants/agentConfig';
 export class LiveAgentService {
   private static instance: LiveAgentService;
   private isRunning: boolean = false;
-  
+
   private socketManager: SocketManager;
   private messageProcessor: MessageProcessor;
   private agentController: AgentController;
@@ -19,6 +19,9 @@ export class LiveAgentService {
   private lastMessageActor: string | null = null;
   private lastMessageTime: number = 0;
   private lastAgentStatus: Record<string, string> = {};
+
+  // Stream buffering: accumulate chunks per agent, write one clean log entry on idle
+  private streamBuffers: Record<string, string> = {};
 
   private constructor() {
       this.socketManager = new SocketManager();
@@ -60,17 +63,12 @@ export class LiveAgentService {
   }
 
   private connectRelay(url: string) {
-      // Re-initialize SocketManager with new URL if needed
-      // Since SocketManager takes URL in constructor, we might need to recreate it or add setUrl method
-      // For now, let's just recreate it if we want to be safe, or assume SocketManager handles it.
-      // But wait, SocketManager is created in constructor. 
-      // Let's modify SocketManager to accept URL in connect, or create a new one.
-      // Current SocketManager takes url in constructor.
-      
       this.socketManager = new SocketManager(url);
       this.socketManager.connect(
           this.handleAgentUpdate.bind(this),
-          this.handleAgentOffline.bind(this)
+          this.handleAgentOffline.bind(this),
+          this.handleStreamChunk.bind(this),
+          this.handlePlanPreview.bind(this)
       );
   }
 
@@ -106,6 +104,25 @@ export class LiveAgentService {
       useAgentStore.getState().setAgentStatus(frontendId as AgentId, 'offline', '已离线');
   }
 
+  private handleStreamChunk(data: { id: string, chunk: string }) {
+      const frontendId = BACKEND_ID_MAPPING[data.id] || data.id;
+
+      // Accumulate in per-agent buffer; flushed as one complete log entry when agent goes idle
+      if (!this.streamBuffers[frontendId]) this.streamBuffers[frontendId] = '';
+      this.streamBuffers[frontendId] += data.chunk;
+
+      // Only update minister's speech bubble for real-time game view feedback
+      // Officials show fixed template text — no LLM content in their bubbles
+      if (frontendId === 'minister') {
+          const buf = this.streamBuffers[frontendId];
+          const displayText = buf.length > 60 ? '...' + buf.slice(-60) : buf;
+          useAgentStore.getState().setAgentStatus('minister', 'working', displayText);
+      }
+  }
+
+  // Timer refs for clearing official idle bubbles after 2s
+  private officialIdleTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
   private handleAgentUpdate(remoteAgent: { id: string, status: string, message: string, action?: { type: string, target: string } }) {
     // 1. ID Mapping
     let frontendId = BACKEND_ID_MAPPING[remoteAgent.id];
@@ -125,7 +142,14 @@ export class LiveAgentService {
     // 2. Message Processing (Buffer & Stitching)
     const fullMessage = this.messageProcessor.processMessage(frontendId, status, message);
 
-    // 2.5 Tool Call / Orchestration Detection
+    // 2.5 Flush stream buffer when agent finishes — writes one clean log entry per agent
+    if (status === 'idle' && this.streamBuffers[frontendId]) {
+        const completedContent = this.streamBuffers[frontendId];
+        delete this.streamBuffers[frontendId];
+        this.writeDecreeLog(frontendId, completedContent);
+    }
+
+    // 2.6 Tool Call / Orchestration Detection
     // New Logic: Check for structured action
     if (action && action.type === 'SUMMON' && action.target) {
          this.handleOrchestration(frontendId, action.target);
@@ -167,12 +191,65 @@ export class LiveAgentService {
     // 3. Agent Control (State & Movement)
     this.agentController.updateAgent(frontendId, status, fullMessage, isGuest);
 
-    // 4. Court Logic (Decree & Logs)
-    this.updateCourtState(frontendId, status, message);
+    // 3.5 Official template bubbles (non-minister, non-emperor agents)
+    const isOfficial = frontendId !== 'minister' && frontendId !== 'emperor';
+    if (isOfficial) {
+        const store = useAgentStore.getState();
+        if (status === 'working') {
+            // Clear any pending idle timer
+            if (this.officialIdleTimers[frontendId]) {
+                clearTimeout(this.officialIdleTimers[frontendId]);
+                delete this.officialIdleTimers[frontendId];
+            }
+            store.setAgentStatus(frontendId as AgentId, 'working', '奉命，正在处理...');
+        } else if (status === 'idle') {
+            store.setAgentStatus(frontendId as AgentId, 'idle', '已回禀丞相');
+            // Clear bubble after 2s
+            this.officialIdleTimers[frontendId] = setTimeout(() => {
+                useAgentStore.getState().setAgentStatus(frontendId as AgentId, 'idle', '');
+                delete this.officialIdleTimers[frontendId];
+            }, 2000);
+        }
+    }
+
+    // 4. Court Logic (Decree lifecycle: executing / auto-complete)
+    this.updateCourtState(frontendId, status);
   }
 
-  private handleOrchestration(initiatorId: string, toolOrAgentName: string) {
-      let targetId: string | null = null;
+  private handlePlanPreview(data: { from: string, tasks: Array<{ official_id: string, instruction: string }> }) {
+      const { addLog, activeDecreeId, decrees } = useCourtStore.getState();
+
+      // Add plan preview log to the active decree
+      let targetDecreeId = activeDecreeId;
+      if (!targetDecreeId) {
+          const activeDecree = decrees.find(d => d.status === 'executing' || d.status === 'drafting' || d.status === 'planning');
+          if (activeDecree) targetDecreeId = activeDecree.id;
+      }
+
+      const officialNames = data.tasks.map(t => {
+          const fid = BACKEND_ID_MAPPING[t.official_id] || t.official_id;
+          return fid;
+      }).join('、');
+
+      if (targetDecreeId) {
+          addLog(targetDecreeId, '系统', '执行计划', `丞相将并行召唤：${officialNames}`);
+      }
+
+      // Update minister bubble: single vs parallel
+      const ministerMsg = data.tasks.length === 1
+          ? `已传唤${officialNames}，等待回禀...`
+          : `正在协调多部，等待回禀...`;
+      useAgentStore.getState().setAgentStatus('minister', 'working', ministerMsg);
+
+      // Mark summoned officials as working with template bubble
+      const store = useAgentStore.getState();
+      for (const task of data.tasks) {
+          const frontendId = BACKEND_ID_MAPPING[task.official_id] || task.official_id;
+          store.setAgentStatus(frontendId as AgentId, 'working', '奉命，正在处理...');
+      }
+  }
+
+  private handleOrchestration(initiatorId: string, toolOrAgentName: string) {      let targetId: string | null = null;
       
       const cleanName = toolOrAgentName.toLowerCase().trim();
 
@@ -195,41 +272,35 @@ export class LiveAgentService {
       }
   }
 
-  private updateCourtState(frontendId: string, status: string, message?: string) {
-      const { addLog, decrees, updateDecreeStatus, activeDecreeId } = useCourtStore.getState();
+  /**
+   * Write a complete agent response as a single log entry to the active decree.
+   * Called when an agent's stream is fully buffered (on idle transition).
+   */
+  private writeDecreeLog(frontendId: string, content: string) {
+      if (!content.trim()) return;
 
-      // Log Recording
-      if (message && this.isValidLogMessage(message, status)) {
-          let targetDecreeId = activeDecreeId;
-          if (!targetDecreeId) {
-               const executingDecree = decrees.find(d => d.status === 'executing');
-               if (executingDecree) targetDecreeId = executingDecree.id;
-          }
-
-          if (targetDecreeId) {
-              const actorName = frontendId === 'minister' ? '丞相' : frontendId;
-              const now = Date.now();
-
-              if (this.lastDecreeId === targetDecreeId && 
-                  this.lastMessageActor === actorName && 
-                  (now - this.lastMessageTime < 2000)) {
-                  
-                  const { appendLogContent } = useCourtStore.getState();
-                  appendLogContent(targetDecreeId, message);
-              } else {
-                  addLog(targetDecreeId, actorName, '回复', message);
-              }
-
-              this.lastDecreeId = targetDecreeId;
-              this.lastMessageActor = actorName;
-              this.lastMessageTime = now;
-          }
+      const { addLog, activeDecreeId, decrees } = useCourtStore.getState();
+      let targetDecreeId = activeDecreeId;
+      if (!targetDecreeId) {
+          const activeDecree = decrees.find(d =>
+              d.status === 'executing' || d.status === 'drafting' || d.status === 'planning'
+          );
+          if (activeDecree) targetDecreeId = activeDecree.id;
       }
 
-      // Auto-Complete Logic
+      if (targetDecreeId) {
+          const actorName = frontendId === 'minister' ? '丞相' : frontendId;
+          addLog(targetDecreeId, actorName, '回复', content.trim());
+      }
+  }
+
+  private updateCourtState(frontendId: string, status: string) {
+      const { updateDecreeStatus, activeDecreeId, decrees } = useCourtStore.getState();
+
       const prevStatus = this.lastAgentStatus[frontendId];
       this.lastAgentStatus[frontendId] = status;
 
+      // Mark decree as executing when any agent starts working
       if (status === 'working') {
           const activeId = activeDecreeId || decrees.find(d => d.status === 'drafting' || d.status === 'planning')?.id;
           if (activeId) {
@@ -241,12 +312,15 @@ export class LiveAgentService {
                    }
                }
           }
-      } else if (status === 'idle') {
-          const executingDecree = activeDecreeId 
-              ? decrees.find(d => d.id === activeDecreeId) 
+      }
+
+      // Auto-complete decree only when the minister (orchestrator) finishes
+      if (status === 'idle' && prevStatus === 'working' && frontendId === 'minister') {
+          const executingDecree = activeDecreeId
+              ? decrees.find(d => d.id === activeDecreeId)
               : decrees.find(d => d.status === 'executing');
-              
-          if (executingDecree && prevStatus === 'working') {
+
+          if (executingDecree) {
               const hasLogs = executingDecree.logs.some(l => l.actor !== 'Emperor' && l.actor !== 'System');
               if (hasLogs) {
                   console.log(`[LiveAgent] Auto-completing decree ${executingDecree.id}`);
@@ -257,14 +331,5 @@ export class LiveAgentService {
               }
           }
       }
-  }
-
-  private isValidLogMessage(message: string, status: string): boolean {
-      return message !== '正在思考...' && 
-             message !== '等待指令...' && 
-             message !== '执行中...' && 
-             message !== '已离线' && 
-             message !== '使用工具...' &&
-             status !== 'offline';
   }
 }

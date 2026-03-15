@@ -121,7 +121,7 @@ const DepartmentDock: React.FC = () => {
                   // Working
                   status === 'working' && "border-[#d4af37] bg-[#d4af37]/10 text-[#d4af37] shadow-[0_0_10px_rgba(212,175,55,0.4)] animate-pulse",
                   // Moving
-                  status === 'moving' && "border-[#e6d5ac]/50 text-[#e6d5ac] border-dashed animate-spin-slow",
+                  status === 'moving' && "border-[#e6d5ac]/50 text-[#e6d5ac] border-dashed",
                   // Error
                   status === 'error' && "border-red-600 bg-red-900/20 text-red-600 shadow-[0_0_10px_rgba(220,38,38,0.4)] animate-shake",
                   // Offline (New)

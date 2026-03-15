@@ -15,8 +15,22 @@ export class MainScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image('office_bg', 'assets/office_bg.png'); 
-    this.load.spritesheet('desk', 'assets/desk.webp', { frameWidth: 138, frameHeight: 107 });
+    console.log('[MainScene] Preload started');
+    
+    this.load.on('filecomplete', (key: string, type: string) => {
+        console.log(`[MainScene] File loaded: ${key} (${type})`);
+    });
+
+    this.load.on('loaderror', (file: Phaser.Loader.File) => {
+        console.error(`[MainScene] Load error: ${file.key}`, file.src);
+    });
+
+    this.load.on('complete', () => {
+        console.log('[MainScene] Loader complete');
+    });
+
+    this.load.image('office_bg', 'assets/office_bg_small.jpg'); 
+    // this.load.spritesheet('desk', 'assets/desk.webp', { frameWidth: 138, frameHeight: 107 });
     
     // 加载角色 Sprite Sheet
     // 皇帝行走图 (8帧动画, 1024x1024 sheet -> 256x256 frame)
@@ -30,16 +44,17 @@ export class MainScene extends Phaser.Scene {
     // 史官 (1024x1024 sheet -> 256x256 frame)
     this.load.spritesheet('historian_char', 'assets/historian.png', { frameWidth: 256, frameHeight: 256 });
     
-    // 访客/通用 (32x32 frame)
-    this.load.spritesheet('guest', 'assets/guest_role.png', { frameWidth: 32, frameHeight: 32 });
+    // 访客/通用 (32x32 frame) - 使用普通官员替代
+    // this.load.spritesheet('guest', 'assets/guest_role.png', { frameWidth: 32, frameHeight: 32 });
+    this.load.spritesheet('guest', 'assets/minister.png', { frameWidth: 32, frameHeight: 32 });
     
     // 户部/六部通用 (1024x1024 sheet -> 256x256 frame)
     this.load.spritesheet('revenue_char', 'assets/revenue.png', { frameWidth: 256, frameHeight: 256 });
     
     // 加载装饰物
-    this.load.spritesheet('plant', 'assets/plant.webp', { frameWidth: 160, frameHeight: 160 });
-    this.load.spritesheet('server', 'assets/server.webp', { frameWidth: 180, frameHeight: 251 });
-    this.load.spritesheet('poster', 'assets/poster.webp', { frameWidth: 160, frameHeight: 160 });
+    // this.load.spritesheet('plant', 'assets/plant.webp', { frameWidth: 160, frameHeight: 160 });
+    // this.load.spritesheet('server', 'assets/server.webp', { frameWidth: 180, frameHeight: 251 });
+    // this.load.spritesheet('poster', 'assets/poster.webp', { frameWidth: 160, frameHeight: 160 });
 
     this.load.on('loaderror', (file: Phaser.Loader.File) => {
         console.error('File load failed:', file.key, file.url);
@@ -85,12 +100,58 @@ export class MainScene extends Phaser.Scene {
     });
 
     // 背景图
-    const bg = this.add.image(width / 2, height / 2, 'office_bg');
-    bg.setDepth(-100); 
-    const scaleX = width / bg.width;
-    const scaleY = height / bg.height;
-    const scale = Math.max(scaleX, scaleY);
-    bg.setScale(scale).setScrollFactor(0);
+    // const bg = this.add.image(width / 2, height / 2, 'office_bg');
+    // bg.setDepth(-100); 
+    // const scaleX = width / bg.width;
+    // const scaleY = height / bg.height;
+    // const scale = Math.max(scaleX, scaleY);
+    // bg.setScale(scale).setScrollFactor(0);
+
+    // 尝试加载图片 (如果加载成功)
+    const tryAddBg = () => {
+        console.log('[MainScene] Checking texture: office_bg', this.textures.exists('office_bg'));
+        if (this.textures.exists('office_bg')) {
+            const bgImg = this.add.image(width / 2, height / 2, 'office_bg');
+            bgImg.setDepth(-99); // 在黑色背景之上
+            const scaleX = width / bgImg.width;
+            const scaleY = height / bgImg.height;
+            const scale = Math.max(scaleX, scaleY);
+            bgImg.setScale(scale).setScrollFactor(0);
+            
+            // 确保没有被意外隐藏
+            bgImg.setVisible(true);
+            bgImg.setAlpha(1);
+
+            console.log('[MainScene] Background added', { 
+                width: bgImg.width, 
+                height: bgImg.height, 
+                scale,
+                x: bgImg.x,
+                y: bgImg.y,
+                visible: bgImg.visible,
+                alpha: bgImg.alpha,
+                depth: bgImg.depth
+            });
+            return true;
+        }
+        return false;
+    };
+
+    if (!tryAddBg()) {
+        console.log('[MainScene] Texture not ready, waiting for load complete...');
+        // Fallback: Listen for load complete if not ready yet
+        this.load.once('complete', () => {
+             console.log('[MainScene] Load complete event fired, retrying addBg...');
+             tryAddBg();
+        });
+        // Force start load if not started (though preload should have done it)
+        if (this.load.isLoading()) {
+            console.log('[MainScene] Loader is currently busy...');
+        } else {
+            console.log('[MainScene] Loader idle, forcing start...');
+            this.load.start();
+        }
+    }
 
     // 交互层 (用于点击移动)
     const floor = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0);
@@ -141,9 +202,9 @@ export class MainScene extends Phaser.Scene {
       addLog(`指令：点击移动 Emperor 到 (${Math.round(x)}, ${Math.round(y)})`);
     });
 
-    // 绘制办公桌
-    this.createDesk(250, 250);
-    this.createDesk(width - 250, height - 250);
+    // 绘制办公桌 (暂时移除，因资源缺失且会导致绿色占位符)
+    // this.createDesk(250, 250);
+    // this.createDesk(width - 250, height - 250);
 
     // 创建动画
     this.createAnimations();
@@ -236,8 +297,8 @@ export class MainScene extends Phaser.Scene {
       this.anims.create({ key: 'generic_official_idle', frames: this.anims.generateFrameNumbers('generic_official', { start: 0, end: 0 }), frameRate: 1, repeat: -1 });
       this.anims.create({ key: 'generic_official_walk', frames: this.anims.generateFrameNumbers('generic_official', { start: 0, end: 3 }), frameRate: 8, repeat: -1 });
       
-      // 桌子
-      this.anims.create({ key: 'desk_anim', frames: this.anims.generateFrameNumbers('desk', { start: 0, end: 3 }), frameRate: 4, repeat: -1 });
+      // 桌子 (已移除资源)
+      // this.anims.create({ key: 'desk_anim', frames: this.anims.generateFrameNumbers('desk', { start: 0, end: 3 }), frameRate: 4, repeat: -1 });
   }
 
   syncAgents(agentsState: Record<string, AgentState>) {
@@ -283,21 +344,42 @@ export class MainScene extends Phaser.Scene {
                     const newTargetX = state.targetPosition.x;
                     const newTargetY = state.targetPosition.y;
 
-                    if (currentTargetX == null || currentTargetY == null ||
-                        Phaser.Math.Distance.Between(currentTargetX, currentTargetY, newTargetX, newTargetY) > 1) {
-                        agent.moveTo(newTargetX, newTargetY);
+                    // 只有当目标位置确实改变，且当前不在该位置附近时，才移动
+                    // 阈值设为 4px (与 Agent.ts 中的判定一致)
+                    const distToNewTarget = Phaser.Math.Distance.Between(agent.x, agent.y, newTargetX, newTargetY);
+                    
+                    if (distToNewTarget > 4) {
+                         // 再次检查是否已经是当前正在前往的目标
+                         if (currentTargetX !== newTargetX || currentTargetY !== newTargetY) {
+                             agent.moveTo(newTargetX, newTargetY);
+                         }
                     }
                 }
             }
 
-            // 同步状态消息
-            if (state.status && state.message) {
-                const isImportant = state.status === 'working' && 
-                                    state.message !== '正在思考...' && 
-                                    state.message !== '执行中...' &&
-                                    state.message !== '使用工具...';
-                
-                agent.say(state.message, 3000, isImportant ? 'high' : 'low');
+            // Minister/emperor: stream LLM content live, then typewriter on idle.
+            // Officials: show fixed template bubbles (set by LiveAgentService).
+            const isMinisterOrEmperor = id === 'minister' || id === 'emperor';
+            if (state.message) {
+                if (isMinisterOrEmperor) {
+                    if (state.status === 'working') {
+                        agent.streamSay(state.message);
+                    } else if (state.status === 'idle') {
+                        const duration = Math.max(3000, Math.min(10000, (state.message.length / 5) * 1000));
+                        agent.say(state.message, duration, 'high');
+                    }
+                } else {
+                    // Officials: always use say() with short duration for template text
+                    if (state.status === 'working') {
+                        agent.say(state.message, 999999, 'high'); // persist until idle
+                    } else if (state.status === 'idle') {
+                        if (state.message) {
+                            agent.say(state.message, 2000, 'high');
+                        } else {
+                            agent.forceStop();
+                        }
+                    }
+                }
             }
         }
     }

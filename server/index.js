@@ -35,7 +35,7 @@ const logger = new Logger(storage);
 const configManager = new ConfigManager(); // Initialize Config Manager
 
 // 2. Core Kernel
-const kernel = new Kernel(io);
+const kernel = new Kernel(io, storage);
 
 // 3. Runtime Services
 const skillManager = new SkillManager();
@@ -248,6 +248,43 @@ app.delete('/api/agents/:id/files/:filename', (req, res) => {
     } else {
         res.status(404).json({ error: 'File not found' });
     }
+});
+
+// --- Debugging APIs ---
+
+// RAG Debug Endpoint
+app.post('/api/agent/:id/memory/debug', async (req, res) => {
+    const { id } = req.params;
+    const { query, limit = 10 } = req.body;
+    
+    const agent = kernel.getAgent(id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    
+    try {
+        const results = await agent.memory.search(query, { 
+            limit, 
+            useVector: true, 
+            debug: true // Enable debug info
+        });
+        
+        res.json({
+            agentId: id,
+            query,
+            results
+        });
+    } catch (error) {
+        logger.error('API', `RAG debug failed for agent ${id}`, error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+httpServer.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[Server] Port ${PORT} is already in use. Run: lsof -ti:${PORT} | xargs kill -9`);
+  } else {
+    console.error('[Server] HTTP server error:', err);
+  }
+  process.exit(1);
 });
 
 httpServer.listen(PORT, () => {

@@ -47,4 +47,23 @@ export class Storage {
     async saveMessage(agentId, message) {
         await this.append('history', { agentId, message });
     }
+
+    /**
+     * Load messages for a specific agent from persistent storage
+     */
+    async loadMessages(agentId) {
+        const all = await this.readAll('history');
+        const clearedAt = this._clearedAt?.[agentId] || 0;
+        return all
+            .filter(r => r.agentId === agentId && r._ts > clearedAt)
+            .map(r => r.message);
+    }
+
+    /**
+     * Clear messages for a specific agent (marks cleared timestamp in memory)
+     */
+    clearMessages(agentId) {
+        if (!this._clearedAt) this._clearedAt = {};
+        this._clearedAt[agentId] = Date.now();
+    }
 }

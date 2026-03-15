@@ -14,8 +14,14 @@ export class Session {
      */
     async getHistory(agentId) {
         if (!this.memories.has(agentId)) {
-            // TODO: Load from persistent storage
-            this.memories.set(agentId, []);
+            // Load from persistent storage on cache miss
+            if (this.storage) {
+                const saved = await this.storage.loadMessages(agentId);
+                // Keep only the most recent MAX_HISTORY entries
+                this.memories.set(agentId, saved.slice(-this.MAX_HISTORY));
+            } else {
+                this.memories.set(agentId, []);
+            }
         }
         return this.memories.get(agentId);
     }
@@ -25,13 +31,13 @@ export class Session {
      */
     async addMessage(agentId, message) {
         const history = await this.getHistory(agentId);
-        
+
         // Add timestamp if missing
         const msgWithMeta = {
             ...message,
             timestamp: Date.now()
         };
-        
+
         history.push(msgWithMeta);
 
         // Simple compaction strategy
@@ -39,9 +45,9 @@ export class Session {
             history.shift(); // Remove oldest
         }
 
-        // TODO: Async persist to storage
+        // Persist to storage
         if (this.storage) {
-            this.storage.saveMessage(agentId, msgWithMeta);
+            await this.storage.saveMessage(agentId, msgWithMeta);
         }
     }
 
@@ -50,6 +56,8 @@ export class Session {
      */
     async clear(agentId) {
         this.memories.set(agentId, []);
-        // TODO: Clear storage
+        if (this.storage) {
+            this.storage.clearMessages(agentId);
+        }
     }
 }

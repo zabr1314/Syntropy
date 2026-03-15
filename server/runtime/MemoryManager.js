@@ -105,7 +105,7 @@ export class MemoryManager {
      * Uses Reciprocal Rank Fusion (RRF) to combine FTS and Vector results.
      */
     async search(query, options = {}) {
-        const { limit = 5, useVector = true, filterRole = null } = options;
+        const { limit = 5, useVector = true, filterRole = null, debug = false } = options;
         
         // 1. Run FTS Search
         const ftsResults = this.searchFTS(query, limit * 2, filterRole); // Get more candidates for re-ranking
@@ -125,7 +125,8 @@ export class MemoryManager {
 
         // 3. Hybrid Ranking (RRF)
         if (vectorResults.length > 0) {
-            return this.rankRRF(ftsResults, vectorResults, limit);
+            const results = this.rankRRF(ftsResults, vectorResults, limit, 60, debug);
+            return results;
         } else {
             return ftsResults.slice(0, limit);
         }
@@ -135,27 +136,43 @@ export class MemoryManager {
      * Reciprocal Rank Fusion
      * score = 1 / (k + rank)
      */
-    rankRRF(ftsResults, vectorResults, limit, k = 60) {
+    rankRRF(ftsResults, vectorResults, limit, k = 60, debug = false) {
         const scores = new Map();
 
         // Helper to update score
-        const updateScore = (item, rank) => {
+        const updateScore = (item, rank, type) => {
             const id = item.id;
-            const currentScore = scores.get(id)?.score || 0;
-            const newScore = currentScore + (1 / (k + rank));
-            scores.set(id, { ...item, score: newScore });
+            const currentEntry = scores.get(id) || { ...item, score: 0, debugInfo: { ftsRank: null, vectorRank: null } };
+            const scoreToAdd = 1 / (k + rank);
+            
+            currentEntry.score += scoreToAdd;
+            
+            if (type === 'fts') currentEntry.debugInfo.ftsRank = rank;
+            if (type === 'vector') currentEntry.debugInfo.vectorRank = rank;
+            
+            scores.set(id, currentEntry);
         };
 
         // Process FTS (Rank starts at 1)
-        ftsResults.forEach((item, index) => updateScore(item, index + 1));
+        ftsResults.forEach((item, index) => updateScore(item, index + 1, 'fts'));
 
         // Process Vector
-        vectorResults.forEach((item, index) => updateScore(item, index + 1));
+        vectorResults.forEach((item, index) => updateScore(item, index + 1, 'vector'));
 
         // Sort by RRF score descending
-        return Array.from(scores.values())
+        const sorted = Array.from(scores.values())
             .sort((a, b) => b.score - a.score)
             .slice(0, limit);
+            
+        if (!debug) {
+            // Remove debug info if not requested
+            return sorted.map(item => {
+                const { debugInfo, ...rest } = item;
+                return rest;
+            });
+        }
+        
+        return sorted;
     }
 
     /**

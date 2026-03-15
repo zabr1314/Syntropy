@@ -89,7 +89,13 @@ const MemorialsPanel: React.FC<MemorialsPanelProps> = ({ onClose, variant = 'mod
 
                       {/* Agent Replies (Filtered Logs) - Should be on the LEFT */}
                       {decree.logs
-                        .filter(log => log.actor !== 'Emperor' && log.actor !== 'System' && log.action === '回复')
+                        .filter(log => 
+                            log.actor !== 'Emperor' && 
+                            log.actor !== 'System' && 
+                            log.action === '回复' &&
+                            log.details !== 'Ready' && // Filter "Ready"
+                            log.details !== '' // Filter empty
+                        )
                         .map((log, idx) => (
                           <div key={idx} className="flex gap-3">
                               <div className="w-8 h-8 rounded-full bg-[#d4af37]/20 border border-[#d4af37]/40 flex items-center justify-center text-[#d4af37] font-bold text-xs shrink-0">

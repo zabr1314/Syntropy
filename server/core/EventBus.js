@@ -17,7 +17,8 @@ export class EventBus extends EventEmitter {
         AGENT_ACTION: 'agent:action',     // Agent performs an action (tool call)
         AGENT_STATUS: 'agent:status',     // Agent status update
         SYSTEM_ERROR: 'system:error',     // System level error
-        USER_INPUT: 'user:input'          // Direct user input
+        USER_INPUT: 'user:input',         // Direct user input
+        AGENT_PLAN: 'plan:preview'        // Agent plan preview (parallel dispatch)
     };
 
     /**

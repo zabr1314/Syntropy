@@ -5,6 +5,7 @@ import { useAgentStore } from '../../store/useAgentStore';
 import { X, Key, ShieldAlert, Trash2, Volume2, Save } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
+import MemoryDebugger from './MemoryDebugger';
 
 interface InternalAffairsModalProps {
   isOpen: boolean;
@@ -58,7 +59,7 @@ const InternalAffairsModal: React.FC<InternalAffairsModalProps> = ({ isOpen, onC
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.9, opacity: 0 }}
-            className="w-full max-w-2xl bg-[#1a0f0f] border-2 border-[#d4af37] rounded-lg shadow-[0_0_50px_rgba(212,175,55,0.2)] flex flex-col overflow-hidden"
+            className="w-full max-w-2xl bg-[#1a0f0f] border-2 border-[#d4af37] rounded-lg shadow-[0_0_50px_rgba(212,175,55,0.2)] flex flex-col overflow-hidden max-h-[90vh]"
           >
             {/* Header */}
             <div className="h-16 bg-[#2c0b0e] border-b border-[#d4af37] flex items-center justify-between px-6 relative overflow-hidden shrink-0">
@@ -125,7 +126,10 @@ const InternalAffairsModal: React.FC<InternalAffairsModalProps> = ({ isOpen, onC
                 </div>
               </div>
 
-              {/* Section 2: Maintenance */}
+              {/* Section 2: Memory Debugger (New) */}
+              <MemoryDebugger />
+
+              {/* Section 3: Maintenance */}
               <div className="space-y-4">
                 <h3 className="text-[#d4af37] font-bold flex items-center gap-2 border-b border-[#d4af37]/20 pb-2">
                   <ShieldAlert size={18} />
