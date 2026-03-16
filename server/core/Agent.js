@@ -282,14 +282,6 @@ export class Agent {
                     this.setStatus(AgentState.IDLE, content || 'Task completed');
                     keepGoing = false;
 
-                    const CAPTURE_KEYWORDS = ['记住', '偏好', '总是', '永远', '不要', '喜欢', '习惯',
-                                              'remember', 'prefer', 'always', 'never', 'like', 'hate'];
-                    const shouldCapture = input && input.length >= 10 && input.length <= 2000 &&
-                        CAPTURE_KEYWORDS.some(k => input.toLowerCase().includes(k));
-                    if (turns === 1 && shouldCapture) {
-                        await this.memory.save(`pref_${Date.now()}`, input, 'user_preference');
-                    }
-
                     return content;
                 }
             }

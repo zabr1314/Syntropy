@@ -1,13 +1,13 @@
 import React from 'react';
 import MemorialsPanel from '../Console/MemorialsPanel';
 import OfficialsPanel from '../Console/OfficialsPanel';
-import LogSidebar from '../Console/LogSidebar';
+import MemoryVault from '../Console/MemoryVault';
 import ConsoleLayout from '../Console/ConsoleLayout';
 import GameContainer from '../GameContainer';
 import JailModal from '../JailModal';
 import ApprovalModal from '../Console/ApprovalModal';
 import PanelFrame from '../Console/PanelFrame';
-import { ShieldCheck, Zap } from 'lucide-react';
+import { ShieldCheck, Zap, Brain } from 'lucide-react';
 import { useAgentStore } from '../../store/useAgentStore';
 
 const DashboardLayout: React.FC = () => {
@@ -100,16 +100,16 @@ const DashboardLayout: React.FC = () => {
              </PanelFrame>
            </div>
 
-           {/* Bottom: Logs (System Stream) */}
+           {/* Bottom: Memory Vault */}
            <div className="flex-1 min-h-0">
-             <PanelFrame 
-               title="起居注" 
-               subtitle="SYSTEM LOGS" 
+             <PanelFrame
+               title="记忆库"
+               subtitle="MEMORY VAULT"
                className="h-full"
                variant="glass"
-               action={<ShieldCheck size={14} />}
+               action={<Brain size={14} />}
              >
-               <LogSidebar variant="embedded" />
+               <MemoryVault variant="embedded" />
              </PanelFrame>
            </div>
 

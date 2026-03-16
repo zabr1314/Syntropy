@@ -1,6 +1,6 @@
 # 太和系统 架构设计文档
 
-> 版本：v2.3 | 更新日期：2026-03-16
+> 版本：v2.4 | 更新日期：2026-03-16
 
 ---
 
@@ -179,6 +179,50 @@ Kernel.dispatch(message, depth) → targetAgent.executeAsSubAgent({
 | **工作记忆** | In-Memory（ContextManager）| 单次会话 | LLM 上下文窗口 |
 | **短期记忆** | SQLite（BM25索引）| 会话持久化 | 近期对话检索 |
 | **长期记忆** | SQLite + 向量索引 | 永久 | 跨会话语义检索 |
+
+### 3.3 LLM 主动记忆捕获
+
+传统记忆系统依赖关键词匹配或规则触发，存在覆盖不全、误判率高的问题。太和系统采用 **LLM 主动决策** 的记忆捕获机制：
+
+```
+用户：我的生日是9月29日
+
+    ┌──────────────────────────────────────┐
+    │          丞相（Minister）             │
+    │                                      │
+    │  1. 识别：这是个人信息，值得记忆      │
+    │  2. 调用 save_memory 工具            │
+    │     - content: "皇帝的生日是9月29日"  │
+    │     - category: "personal"           │
+    │     - importance: "high"             │
+    └──────────────────────────────────────┘
+                    │
+                    ▼
+    ┌──────────────────────────────────────┐
+    │      MemoryManager.save()            │
+    │  role='user_preference' 标记         │
+    │  metadata: { category, importance,   │
+    │             savedBy, savedAt }       │
+    └──────────────────────────────────────┘
+                    │
+                    ▼
+    ┌──────────────────────────────────────┐
+    │  SQLite chunks 表 + 向量索引          │
+    │  前端 Memory API 可查询/编辑/删除     │
+    └──────────────────────────────────────┘
+```
+
+**关键优势**：
+- **零规则**：无需维护关键词列表，LLM 自主判断记忆价值
+- **语义理解**：能识别隐含信息（如"下周二"→ 具体日期）
+- **分类准确**：LLM 根据上下文选择 category（personal/preference/project/decision）
+- **去重内置**：MemoryManager.save() 自动检测重复内容
+
+**Memory API**：
+- `GET /api/memory`：获取所有 user_preference 记忆
+- `POST /api/memory`：手动创建记忆
+- `PATCH /api/memory/:id`：编辑记忆内容
+- `DELETE /api/memory/:id`：删除记忆
 
 ---
 
@@ -362,6 +406,12 @@ LLM.chatStream()
 ### 7.11 路由统一化（SocketGateway）
 
 Socket.io 职责从 Kernel 完全剥离到独立的 `SocketGateway`。Kernel 不再持有 `io`，只负责调度逻辑，可独立测试。SocketGateway 在入站时生成 traceId 并注入 `handleCommand()`，实现传输层与调度层的清晰边界。
+
+### 7.12 LLM 主动记忆（save_memory 技能）
+
+传统 Agent 记忆系统依赖关键词匹配或固定规则触发，存在覆盖不全、误判率高的问题。太和系统通过 `save_memory` 技能将记忆捕获决策权完全交给 LLM：Agent 在对话中自主判断哪些信息值得长期保存，并主动调用工具写入 SQLite（`role='user_preference'`）。
+
+这消除了规则维护成本，同时利用 LLM 的语义理解能力实现了更准确的分类（personal/preference/project/decision）和去重。前端 MemoryVault 组件通过 Memory API 提供记忆的查看、编辑、删除和搜索能力，形成完整的记忆管理闭环。
 
 ---
 

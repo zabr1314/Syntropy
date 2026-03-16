@@ -19,7 +19,10 @@ import { Logger } from './infra/Logger.js';
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: "*", methods: ["GET", "POST"] }
+  cors: { origin: "*", methods: ["GET", "POST"] },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['websocket', 'polling']
 });
 
 const PORT = process.env.PORT || 3001;
@@ -257,6 +260,112 @@ app.delete('/api/agents/:id/files/:filename', (req, res) => {
 });
 
 // --- Debugging APIs ---
+
+// Memory Management APIs
+app.get('/api/memory', (req, res) => {
+    try {
+        const allMemories = [];
+
+        for (const agent of kernel.agents.values()) {
+            if (!agent.memory) continue;
+
+            // Only fetch intentional memories, not conversation history
+            const memories = agent.memory.db.prepare(`
+                SELECT id, content, role, metadata, created_at
+                FROM chunks
+                WHERE role = 'user_preference'
+                ORDER BY created_at DESC
+            `).all();
+
+            memories.forEach(mem => {
+                allMemories.push({
+                    id: mem.id,
+                    content: mem.content,
+                    source: agent.id,
+                    role: mem.role,
+                    metadata: mem.metadata ? JSON.parse(mem.metadata) : {},
+                    timestamp: mem.created_at
+                });
+            });
+        }
+
+        res.json(allMemories);
+    } catch (error) {
+        logger.error('API', 'Failed to fetch memories', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/memory', async (req, res) => {
+    try {
+        const { content, source, role = 'user_preference', metadata = {} } = req.body;
+
+        if (!content || !source) {
+            return res.status(400).json({ error: 'content and source are required' });
+        }
+
+        const agent = kernel.getAgent(source);
+        if (!agent || !agent.memory) {
+            return res.status(404).json({ error: 'Agent not found' });
+        }
+
+        const id = `manual_${Date.now()}`;
+        await agent.memory.save(id, content, role, metadata);
+
+        res.json({ success: true, id });
+    } catch (error) {
+        logger.error('API', 'Failed to create memory', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.patch('/api/memory/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { content, source } = req.body;
+
+        if (!content || !source) {
+            return res.status(400).json({ error: 'content and source are required' });
+        }
+
+        const agent = kernel.getAgent(source);
+        if (!agent || !agent.memory) {
+            return res.status(404).json({ error: 'Agent not found' });
+        }
+
+        agent.memory.db.prepare(`
+            UPDATE chunks SET content = ? WHERE id = ?
+        `).run(content, id);
+
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('API', 'Failed to update memory', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.delete('/api/memory/:id', (req, res) => {
+    try {
+        const { id } = req.params;
+        const { source } = req.query;
+
+        if (!source) {
+            return res.status(400).json({ error: 'source query param is required' });
+        }
+
+        const agent = kernel.getAgent(source);
+        if (!agent || !agent.memory) {
+            return res.status(404).json({ error: 'Agent not found' });
+        }
+
+        agent.memory.db.prepare(`DELETE FROM chunks WHERE id = ?`).run(id);
+
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('API', 'Failed to delete memory', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // RAG Debug Endpoint
 app.post('/api/agent/:id/memory/debug', async (req, res) => {

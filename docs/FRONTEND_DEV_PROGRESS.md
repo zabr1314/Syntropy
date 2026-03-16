@@ -85,6 +85,22 @@
   - **幽灵数据清理**: 在 `MainScene` 中增加了自动清理逻辑，确保游戏画面与配置列表严格同步，不再显示已删除的 "幽灵角色"。
   - **皇帝保护机制**: 增加了强制保护逻辑，确保核心角色 "皇帝 (Emperor)" 始终存在于场景中，即使配置为空也会自动创建。
 
+### 3.5 稳定性修复 (Stability Fixes) [2026-03-16]
+
+- **修复重复启动问题**：移除 `GameContainer.tsx` 中对 `LiveAgentService.start()/stop()` 的重复调用。`App.tsx` 是服务生命周期的唯一所有者，避免了重复订阅和状态抖动。
+- **修复 Decree 生命周期误判**：`LiveAgentService.updateCourtState()` 中给 decree 自动完结加了 2s debounce。minister 在工具调用间隙短暂 idle 时不再误触发完结，只有持续 idle 2 秒后才标记为 `completed`。
+
+### 3.6 前端测试体系 (Frontend Testing) [2026-03-16]
+
+- **测试框架**：Vitest + @testing-library/react + jsdom
+- **测试脚本**：`npm test`（watch）、`npm test -- --run`（单次）
+- **测试文件**：`src/services/LiveAgentService.test.ts`
+  - 验证 minister working 时取消 completion timer
+  - 验证 minister idle 2秒后自动完成 decree
+  - 验证 stop() 清理 timer 防内存泄漏
+  - 验证无 agent 日志时不误完成 decree
+- **测试配置**：`vite.config.ts` 中 `test.include: ['src/**/*.test.{ts,tsx}']`，隔离子项目测试
+
 ## 4. 待办事项 (Todo)
 
 - [x] **RAG 检索测试**: 在前端增加测试窗口，验证上传文件后的检索效果 (已通过 MemoryDebugger 实现)。
@@ -94,4 +110,4 @@
 
 ---
 
-*文档更新时间: 2026-03-13*
+*文档更新时间: 2026-03-16*

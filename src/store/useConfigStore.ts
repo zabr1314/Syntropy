@@ -20,6 +20,11 @@ export interface AgentConfig {
   systemPrompt?: string; // Added for prompt editing
   model?: string | object; // Added for model config
   texture?: string; // Added for visual customization
+  identity?: {
+    name: string;
+    emoji: string;
+    avatar?: string | null;
+  };
 }
 
 export interface SkillDefinition {
@@ -96,7 +101,7 @@ export const useConfigStore = create<ConfigState>()(
             if (!response.ok) throw new Error('Failed to fetch officials');
             const officials = await response.json();
             
-            const agents = officials.map((o: { id: string, name: string, description: string, systemPrompt?: string, skills?: string[], model?: string|object, texture?: string }) => ({
+            const agents = officials.map((o: { id: string, name: string, description: string, systemPrompt?: string, skills?: string[], model?: string|object, texture?: string, identity?: { name: string, emoji: string, avatar?: string | null } }) => ({
                 role: o.id,
                 name: o.name,
                 port: '3001',
@@ -104,7 +109,8 @@ export const useConfigStore = create<ConfigState>()(
                 systemPrompt: o.systemPrompt,
                 skills: o.skills,
                 model: o.model,
-                texture: o.texture
+                texture: o.texture,
+                identity: o.identity
             }));
             
             // Merge with local state to preserve un-synced changes or textures if backend missing
