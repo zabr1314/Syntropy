@@ -46,8 +46,9 @@
   - 实现了基于字符的启发式算法 (Heuristic)，支持中英文混合计数。
   - 预留了 `tiktoken` 接入接口。
 - **动态修剪 (Context Pruning)**:
-  - 策略: 优先保留 System Prompt 和最近的用户查询。
-  - 自动从历史记录中间部分修剪过期的 User/Assistant 消息对。
+  - 策略: 识别"安全删除单元"，`assistant(tool_calls)` + 所有对应 `tool result` 作为原子组整体删除。
+  - 绝不拆散 tool_call/tool_result 配对，消除 400 API 错误。
+  - 优先保留 System Prompt 和最近的用户查询。
 - **Prompt 组装**:
   - 统一了 `composeContext({ systemPrompt, history, tools, query })` 接口。
 
@@ -66,11 +67,16 @@
 - **混合排序 (RRF)**:
   - 实现了 Reciprocal Rank Fusion (RRF) 算法。
   - 自动合并全文检索 (FTS) 和向量检索 (Vector) 的结果，提供更精准的上下文召回。
+- **记忆压缩 (Memory Compression)**:
+  - 实现了 `onSleep` 钩子，当 Agent 闲置超时进入休眠时触发。
+  - 自动提取最近未总结的对话记录，调用 LLM 生成 "每日摘要 (Daily Summary)" 并持久化。
+  - 解决了长对话导致的上下文遗忘问题，实现知识的长期沉淀。
 - **RAG 集成**:
   - 在 Agent 执行循环中，自动检索与用户输入相关的长时记忆并注入 System Prompt。
+  - 提供了 `/api/agent/:id/memory/debug` 调试接口，支持前端可视化验证检索效果。
 
 - **代码索引**:
-  - [server/runtime/MemoryManager.js](file:///server/runtime/MemoryManager.js)
+  - [server/runtime/MemoryManager.js](file:///server/runtime/MemoryManager.js)（含去重逻辑）
   - [server/infra/EmbeddingService.js](file:///server/infra/EmbeddingService.js)
 
 ### 2.5 高级工具系统 (Advanced Tooling)
@@ -90,8 +96,11 @@
 - **ACP 消息结构**:
   - 定义了标准消息格式: `{ from, to, type, action, payload }`。
 - **消息分发 (Dispatch)**:
-  - `Kernel.dispatch(message)` 负责消息路由。
+  - `Kernel.dispatch(message, depth)` 负责消息路由，携带派生深度。
+  - `MAX_SPAWN_DEPTH=2`：超限直接返回错误字符串，阻断无限递归。
+  - 60s 超时保护：`Promise.race` 包装，防止官员卡死导致丞相挂起。
   - 重构了 `call_official` 技能，通过 ACP 发送任务请求，而非直接操作目标 Agent 实例。
+  - `call_officials` 改用 `Promise.allSettled`，单个官员失败不影响其他。
 
 ### 2.7 配置中心与热更新 (Config & Hot Reload)
 实现了 Agent 配置的可视化管理与运行时热更新。
@@ -119,9 +128,44 @@
   - 在 `AgentDetailModal` 中新增 **"知识库 (Files)"** 选项卡。
   - 支持拖拽上传、文件预览与删除操作。
 
----
+### 2.9 结构化可观测性 (Structured Observability)
+参考 OpenClaw 的诊断事件体系，实现了链路追踪、结构化事件和日志脱敏。
 
-## 3. 待开发特性 (Roadmap)
+- **链路追踪 (Trace ID)**:
+  - 每次用户指令或 `dispatch` 生成根 traceId（8位十六进制）。
+  - 子 Agent 继承父链路，格式为 `parent.depth`（如 `ab12cd34.1`）。
+- **诊断事件 (Diagnostic Events)**:
+  - `agent.turn.start/end`：每个 LLM 回合的开始/结束和耗时。
+  - `tool.call.start/end`：工具执行前后，含成功/失败标记。
+  - `model.usage`：LLM 返回后记录 promptTokens、completionTokens、耗时。
+  - `dispatch.start/end`：ACP 调度入口和出口。
+  - `approval.wait`：进入人工审批等待时记录。
+  - `agent.stuck`：Agent 在 THINKING/ACTING 超过 3 分钟时自动告警。
+- **日志脱敏 (Redaction)**:
+  - 自动识别并截断 Bearer token、sk- 格式 API Key、password/secret 字段。
+  - 保留前6位用于调试确认，不暴露完整明文。
+
+- **代码索引**:
+  - [server/infra/Tracer.js](file:///server/infra/Tracer.js)（单例 `tracer`，`redact()`）
+
+### 2.10 路由统一化 (Routing Separation)
+将 Socket.io 职责从 Kernel 完全剥离，实现控制平面与传输层解耦。
+
+- **SocketGateway**:
+  - 独立负责连接管理、入站命令归一化、出站事件广播。
+  - 入站：socket `command` 事件 → 生成 traceId → `kernel.handleCommand(data, traceId)`。
+  - 出站：订阅 EventBus（`agent:status`、`agent:stream`、`approval:request`、`plan:preview`）→ 广播到 frontend room。
+- **Kernel 职责收窄**:
+  - 构造函数不再接收 `io`，不再有 `setupSocket()` / `broadcastState()`。
+  - 只负责 Agent 注册、`dispatch()`、`handleCommand()`。
+- **traceId 贯穿入口**:
+  - `handleCommand()` 接收 traceId，每条用户指令从 socket 入口就有链路 ID。
+
+- **代码索引**:
+  - [server/runtime/SocketGateway.js](file:///server/runtime/SocketGateway.js)
+  - [server/core/Kernel.js](file:///server/core/Kernel.js)（已移除 socket 逻辑）
+
+---
 
 - [x] **向量数据库集成 (Vector DB Integration)**
   - [x] 接入 Embedding 服务 (OpenAI / Local Models)。
@@ -137,16 +181,49 @@
 - [x] **多智能体协作协议 (Agent Collaboration Protocol)**
   - [x] 实现 `Kernel.dispatch` 消息路由。
   - [x] 规范 Agent 间的通信标准。
-- [x] **配置中心与热更新 (Config & Hot Reload)**
-  - [x] 实现配置持久化与 API。
-  - [x] 实现前端可视化配置界面。
-- [x] **文件管理系统 (File Management)**
-  - [x] 实现后端上传/下载 API。
-  - [x] 实现前端文件管理 UI。
+  - [x] 派生深度控制（MAX_SPAWN_DEPTH=2，防无限递归）。
+  - [x] Dispatch 60s 超时保护（Promise.race）。
+  - [x] call_officials 改用 Promise.allSettled（单点失败隔离）。
+- [x] **上下文安全压缩 (Safe Context Pruning)**
+  - [x] 安全删除单元策略，保护 tool_call/tool_result 配对。
+- [x] **记忆自动捕获 (Auto Memory Capture)**
+  - [x] 启发式关键词过滤，自动保存用户偏好。
+  - [x] MemoryManager 去重，避免噪音污染记忆库。
+- [x] **Session SQLite 持久化 (SessionStore)**
+  - [x] 新建 `server/infra/SessionStore.js`，替代 JSONL Storage。
+  - [x] 带索引的 SQLite，性能不随文件增长劣化。
+- [x] **结构化可观测性 (Structured Observability)**
+  - [x] `Tracer` 单例：traceId 生成/传播、8种诊断事件、日志脱敏、卡死检测。
+  - [x] `Kernel.dispatch()` / `Agent.execute()` / `LLM.chatStream()` 全链路注入。
+- [x] **路由统一化 (Routing Separation)**
+  - [x] 新建 `SocketGateway`，Socket.io 职责完全从 Kernel 剥离。
+  - [x] Kernel 不再持有 `io`，只负责调度。
+  - [x] traceId 从 socket 入口贯穿到 Agent 执行。
+- [ ] **插件契约化 (Skill Manifest)**
+  - [ ] 统一 skill metadata（版本、config schema）。
+  - [ ] 生命周期钩子（onLoad / onUnload）。
+- [ ] **安全参数卫兵 (Security Guards)**
+  - [ ] Shell 元字符静态分析。
+  - [ ] SSRF 出口 IP 过滤。
 
 ---
 
 ## 4. 更新日志 (Changelog)
+
+- **2026-03-16 (续)**:
+  - 新建 `server/infra/Tracer.js`：traceId 链路追踪、8种结构化诊断事件、日志脱敏、3分钟卡死检测。
+  - `Kernel.dispatch()` / `Agent.execute()` / `handleToolCalls()` / `LLM.chatStream()` 全链路注入 traceId 和诊断事件。
+  - 新建 `server/runtime/SocketGateway.js`，Socket.io 职责从 Kernel 完全剥离。
+  - `Kernel` 构造函数移除 `io` 参数，`handleCommand()` 新增 traceId 参数。
+  - 测试用例扩展至 31 个，全部通过。
+
+- **2026-03-16**:
+  - 优化1：`Kernel.dispatch()` 加 `depth` 参数，`MAX_SPAWN_DEPTH=2` 防无限递归。
+  - 优化2：`ContextManager.pruneContext()` 重写为安全删除单元策略，保护 tool_call/tool_result 配对。
+  - 优化3：`Agent.execute()` 加启发式记忆自动捕获；`MemoryManager.save()` 加去重。
+  - 优化4：`Kernel.dispatch()` 加 60s `Promise.race` 超时；`call_officials` 改用 `Promise.allSettled`。
+  - 优化5：新建 `SessionStore`（better-sqlite3），Session 持久化从 JSONL 迁移到 SQLite。
+  - 新增 `test/run_tests.js`，20 个单元测试全部通过。
 
 - **2024-03-12**:
   - 实现文件管理系统：支持 Agent 工作区文件上传与管理。

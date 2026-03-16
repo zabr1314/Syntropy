@@ -3,6 +3,7 @@ import fs from 'fs';
 import { MemoryManager } from '../runtime/MemoryManager.js';
 import { ContextManager } from '../runtime/ContextManager.js';
 import { EmbeddingService } from '../infra/EmbeddingService.js';
+import { tracer } from '../infra/Tracer.js';
 
 export const AgentState = {
     INITIALIZING: 'initializing',
@@ -188,30 +189,28 @@ export class Agent {
     /**
      * Core Execution Loop (Standardized)
      */
-    async execute(input) {
+    async execute(input, traceId = null) {
         if (!this.kernel) throw new Error('Kernel not attached');
 
+        // Use provided traceId (from sub-agent dispatch) or generate a new root one
+        const activeTraceId = traceId || tracer.newTraceId();
+        this._currentTraceId = activeTraceId;
+
         this.metrics.lastActive = Date.now();
-        // Immediately notify frontend that we are working
         this.setStatus(AgentState.THINKING, 'Thinking...');
-        
-        // Force a broadcast for "working" status if frontend expects it
-        // Some frontends might only react to 'working' or specific status strings
+
         if (this.kernel) {
              this.kernel.events.publish('agent:status', {
                 id: this.id,
-                status: 'working', // Compatible with legacy frontend
+                status: 'working',
                 message: '正在思考...'
             });
         }
 
         try {
-            // 1. Add User Message to Context (Session + Memory)
             await this.kernel.session.addMessage(this.id, { role: 'user', content: input });
-            // Save to memory (auto-generates embedding)
             await this.memory.save(`msg_${Date.now()}_u`, input, 'user');
 
-            // 2. Call LLM Loop
             let keepGoing = true;
             let turns = 0;
             const MAX_TURNS = this.runtimeConfig.maxTurns;
@@ -219,61 +218,52 @@ export class Agent {
             while (keepGoing && turns < MAX_TURNS) {
                 turns++;
                 this.metrics.totalTurns++;
-                
-                // 3. Prepare Context with ContextManager
-                // Merge role-specific tools with global skills (filtered)
+
+                const t0 = Date.now();
+                tracer.agentTurnStart(this.id, activeTraceId, turns);
+
                 const globalSkills = this.kernel.skillManager ? this.kernel.skillManager.getAllDefinitions() : [];
-                // Tool definitions use OpenAI format: { type: 'function', function: { name, ... } }
                 const allowedSkills = globalSkills.filter(s => this.isSkillAllowed(s.function?.name));
                 const allTools = [...this.tools, ...allowedSkills];
 
-                // Step 3a: Use Session history as the authoritative conversation context.
-                // Session preserves all required API fields (tool_calls, tool_call_id).
-                // memory.getRecent() strips these fields and causes 400 errors.
                 const sessionHistory = await this.kernel.session.getHistory(this.id);
                 const rawHistory = sessionHistory.slice(-20);
 
-                // Step 3b: Retrieve relevant long-term memories (RAG)
                 let relevantMemories = [];
                 if (turns === 1 && input.length > 5) {
                     relevantMemories = await this.memory.search(input, { limit: 3, useVector: true });
                 }
-                
-                // Inject memories into system prompt or as a separate context message?
-                // For now, let's append them to system prompt for simplicity
+
                 let currentSystemPrompt = this.systemPrompt;
                 if (relevantMemories.length > 0) {
                     const memoryText = relevantMemories.map(m => `- ${m.content}`).join('\n');
                     currentSystemPrompt += `\n\nRelevant Context:\n${memoryText}`;
                 }
 
-                // Compose final context (System Prompt + History + Pruning)
                 const messages = await this.context.composeContext({
                     systemPrompt: currentSystemPrompt,
                     history: rawHistory,
                     tools: allTools
                 });
 
-                // Use configured model
                 const model = this.getModel();
-                
                 const prunedHistory = messages.filter(m => m.role !== 'system');
-                
+
                 const responseMessage = await this.kernel.llm.chatStream({
                     model,
                     systemPrompt: currentSystemPrompt,
                     history: prunedHistory,
                     tools: allTools,
                     temperature: this.runtimeConfig.temperature,
+                    traceId: activeTraceId,
+                    agentId: this.id,
                     onChunk: (chunk) => {
                         this.kernel.events.publish('agent:stream', { id: this.id, chunk });
                     }
                 });
 
-                // Always save the complete assistant message to Session.
-                // This is critical: when the LLM makes tool calls, content is null but
-                // tool_calls must be persisted so subsequent turns have a valid conversation
-                // structure (API requires assistant tool_call → tool result pairing).
+                tracer.agentTurnEnd(this.id, activeTraceId, turns, Date.now() - t0);
+
                 const content = responseMessage.content || '';
                 const assistantMsg = { role: 'assistant', content: responseMessage.content || null };
                 if (responseMessage.tool_calls?.length > 0) {
@@ -281,23 +271,29 @@ export class Agent {
                 }
                 await this.kernel.session.addMessage(this.id, assistantMsg);
 
-                // Save text content to long-term memory for future RAG retrieval
                 if (content) {
                     await this.memory.save(`msg_${Date.now()}_a`, content, 'assistant');
                 }
 
-                // Handle Tool Calls or Final Response
                 if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
                     this.setStatus(AgentState.ACTING, 'Executing tools...');
-                    await this.handleToolCalls(responseMessage.tool_calls);
-                    // Loop continues
+                    await this.handleToolCalls(responseMessage.tool_calls, activeTraceId);
                 } else {
                     this.setStatus(AgentState.IDLE, content || 'Task completed');
                     keepGoing = false;
+
+                    const CAPTURE_KEYWORDS = ['记住', '偏好', '总是', '永远', '不要', '喜欢', '习惯',
+                                              'remember', 'prefer', 'always', 'never', 'like', 'hate'];
+                    const shouldCapture = input && input.length >= 10 && input.length <= 2000 &&
+                        CAPTURE_KEYWORDS.some(k => input.toLowerCase().includes(k));
+                    if (turns === 1 && shouldCapture) {
+                        await this.memory.save(`pref_${Date.now()}`, input, 'user_preference');
+                    }
+
                     return content;
                 }
             }
-            
+
             if (turns >= MAX_TURNS) {
                 this.setStatus(AgentState.IDLE, 'Max turns reached');
                 return "Max turns reached.";
@@ -312,7 +308,8 @@ export class Agent {
     /**
      * Handle Tool Calls
      */
-    async handleToolCalls(toolCalls) {
+    async handleToolCalls(toolCalls, traceId = null) {
+        const activeTraceId = traceId || this._currentTraceId || 'unknown';
         for (const toolCall of toolCalls) {
             const functionName = toolCall.function.name;
             let args = {};
@@ -321,14 +318,13 @@ export class Agent {
             } catch (e) {
                 console.error(`[Agent ${this.id}] Failed to parse tool arguments`, e);
             }
-            
+
             // Check risk level
             const skill = this.kernel.skillManager.getSkill(functionName);
             if (skill && (skill.riskLevel === 'medium' || skill.riskLevel === 'high')) {
-                // Suspend execution for approval
                 this.setStatus(AgentState.WAITING_FOR_HUMAN, `Waiting for approval: ${functionName}`);
-                
-                // Notify frontend about approval request
+                tracer.approvalWait(this.id, activeTraceId, functionName);
+
                 this.kernel.events.publish('approval:request', {
                     agentId: this.id,
                     toolCallId: toolCall.id,
@@ -336,52 +332,46 @@ export class Agent {
                     args,
                     riskLevel: skill.riskLevel
                 });
-                
-                // Save state for resumption (simplified for MVP - assuming in-memory pause)
-                // In a stateless system, we would need to persist this state to DB.
-                // Here we block the loop? No, that would block the thread.
-                // We need to return from execute() and wait for a callback.
-                
-                // For MVP, we can't easily pause the JS execution stack inside a loop without Generators or Workers.
-                // Alternative: Throw a special "Suspension" error to exit the loop, 
-                // and store the continuation context in the Agent instance.
-                
+
                 this.pendingApproval = {
                     toolCall,
                     toolCallsRemaining: toolCalls.slice(toolCalls.indexOf(toolCall) + 1)
                 };
-                
-                return; // Exit execution loop
+
+                return;
             }
 
             this.setStatus(AgentState.ACTING, `Executing tool: ${functionName}`);
-            
+            tracer.toolCallStart(this.id, activeTraceId, { toolName: functionName, callId: toolCall.id });
+            const t0 = Date.now();
+
             let result;
             try {
-                // Check if it's a built-in tool or a global skill
                 if (this.kernel.skillManager.hasSkill(functionName)) {
-                    // Pass enriched context
                     const context = {
                         agent: this,
                         kernel: this.kernel,
-                        workspace: this.workspace
+                        workspace: this.workspace,
+                        depth: this._currentDepth || 0,
+                        traceId: activeTraceId
                     };
                     result = await this.kernel.skillManager.execute(functionName, args, context);
                 } else {
                     result = `Tool ${functionName} not found.`;
                 }
+                tracer.toolCallEnd(this.id, activeTraceId, { toolName: functionName, callId: toolCall.id, durationMs: Date.now() - t0, ok: true });
             } catch (err) {
                 console.error(`[Agent ${this.id}] Tool Execution Error:`, err);
+                tracer.toolCallEnd(this.id, activeTraceId, { toolName: functionName, callId: toolCall.id, durationMs: Date.now() - t0, ok: false });
                 result = `Error executing ${functionName}: ${err.message}`;
             }
 
-            // Add Tool Output to Context
             const toolMessage = {
                 role: 'tool',
                 tool_call_id: toolCall.id,
                 content: typeof result === 'string' ? result : JSON.stringify(result)
             };
-            
+
             await this.kernel.session.addMessage(this.id, toolMessage);
             await this.memory.save(`msg_${Date.now()}_t`, JSON.stringify(toolMessage), 'tool', { tool_call_id: toolCall.id });
         }
@@ -450,18 +440,18 @@ export class Agent {
      * Execute as a sub-agent dispatched by another agent.
      * Temporarily injects task origin context into the system prompt.
      */
-    async executeAsSubAgent({ from, instruction }) {
+    async executeAsSubAgent({ from, instruction, depth = 0, traceId = null }) {
+        this._currentDepth = depth;
         const originalPrompt = this.systemPrompt;
         this.systemPrompt = `${this.systemPrompt}\n\n[任务来源：${from}]`;
-        // Clear stale session history so each sub-agent dispatch starts fresh.
-        // Officials are stateless workers — old tool_call chains cause 400 API errors.
         if (this.kernel) {
             await this.kernel.session.clear(this.id);
         }
         try {
-            return await this.execute(instruction);
+            return await this.execute(instruction, traceId);
         } finally {
             this.systemPrompt = originalPrompt;
+            this._currentDepth = 0;
         }
     }
 

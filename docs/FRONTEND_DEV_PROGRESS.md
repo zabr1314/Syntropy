@@ -29,6 +29,10 @@
   - 可视化展示任务（诏令）的流转状态：Draft -> Planned -> Execution -> Completed。
 - **LogSidebar (起居注)**:
   - 实时滚动显示系统的运行日志和 Agent 的思考过程。
+- **MemoryDebugger (记忆透视镜)**:
+  - 集成在“内务府”模块中，提供 RAG 检索的可视化调试能力。
+  - 支持输入 Query，实时查看后端返回的混合检索结果（FTS + Vector）。
+  - 使用颜色编码展示不同检索策略的权重分布。
 
 ### 2.2 状态管理 (State Management)
 基于 Zustand 实现，位于 `src/store/`。
@@ -71,6 +75,7 @@
 - **内务府 (Internal Affairs)**:
   - 重构了系统设置面板，采用**皇家古典风格** (Imperial Style)，提升沉浸感。
   - 移除了废弃的 OpenClaw Gateway/Relay 配置，专注于 **API Key 管理** (DeepSeek/OpenAI) 和 **系统维护** (清空奏折/重置)。
+  - 新增 **Memory Debugger (记忆透视镜)**，允许开发者实时调试 RAG 检索效果。
 - **角色可视化 (Visual Customization)**:
   - **缩放标准化**: 统一了角色缩放逻辑。自定义高清角色 (如丞相) 缩放调整为 `0.75x` (原 `2.8x` 导致过大)，通用像素角色保持 `2.8x`，视觉比例更协调。
   - **皮肤持久化**: 修复了刷新页面后自定义皮肤 (Skin) 丢失的问题。优化了 `useConfigStore` 的同步逻辑，支持乐观更新 (Optimistic Updates) 和本地配置保留。
@@ -82,7 +87,7 @@
 
 ## 4. 待办事项 (Todo)
 
-- [ ] **RAG 检索测试**: 在前端增加测试窗口，验证上传文件后的检索效果。
+- [x] **RAG 检索测试**: 在前端增加测试窗口，验证上传文件后的检索效果 (已通过 MemoryDebugger 实现)。
 - [ ] **多文件上传**: 优化上传组件，支持批量文件选择。
 - [ ] **文件预览**: 支持在前端直接预览文本或 PDF 文件内容。
 - [x] **审批流 UI**: 实现 `WAITING_FOR_HUMAN` 状态的弹窗提示，允许用户批准/拒绝高风险操作。

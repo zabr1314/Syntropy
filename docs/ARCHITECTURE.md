@@ -1,6 +1,6 @@
 # 太和系统 架构设计文档
 
-> 版本：v2.1 | 更新日期：2026-03-14
+> 版本：v2.3 | 更新日期：2026-03-16
 
 ---
 
@@ -29,7 +29,13 @@
                             │         approval_request
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Kernel（内核）                              │
+│                   SocketGateway（传输层）                         │
+│   连接管理 │ 入站归一化 + traceId 生成 │ 出站事件广播             │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ handleCommand(data, traceId)
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Kernel（调度层）                             │
 │                                                                  │
 │   ┌────────────┐   ┌────────────┐   ┌──────────────────────┐   │
 │   │  EventBus  │   │  Session   │   │    SkillManager       │   │
@@ -42,26 +48,28 @@
 │   └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                             │
-                  ┌─────────┴─────────┐
-                  │                   │
-                  ▼                   ▼
-         ┌──────────────┐    ┌──────────────────┐
-         │  LLM Service │    │  Storage / Memory │
-         │ (DeepSeek /  │    │  SQLite + Vector  │
-         │  GPT-4o)     │    │  (BGE Embeddings) │
-         └──────────────┘    └──────────────────┘
+              ┌─────────────┼─────────────┐
+              ▼             ▼             ▼
+     ┌──────────────┐  ┌─────────┐  ┌──────────────────┐
+     │  LLM Service │  │ Tracer  │  │  Storage / Memory │
+     │ (DeepSeek /  │  │(链路追踪│  │  SQLite + Vector  │
+     │  GPT-4o)     │  │ 诊断事件│  │  (BGE Embeddings) │
+     └──────────────┘  └─────────┘  └──────────────────┘
 ```
 
 ### 核心组件职责
 
 | 组件 | 职责 | 关键文件 |
 |------|------|---------|
-| **Kernel** | 生命周期管理、消息路由、Socket 桥接 | `server/core/Kernel.js` |
+| **SocketGateway** | Socket.io 连接管理、入站归一化、出站广播 | `server/runtime/SocketGateway.js` |
+| **Kernel** | Agent 注册、消息调度（dispatch/handleCommand） | `server/core/Kernel.js` |
 | **Agent** | 执行循环、工具调用、记忆写入 | `server/core/Agent.js` |
 | **EventBus** | 内部 Pub/Sub，解耦组件 | `server/core/EventBus.js` |
 | **SkillManager** | 动态加载技能、权限检查、执行 | `server/runtime/SkillManager.js` |
 | **MemoryManager** | RRF 混合检索、BM25 + 向量双路 | `server/runtime/MemoryManager.js` |
 | **Session** | 每个 Agent 的对话历史持久化 | `server/core/Session.js` |
+| **SessionStore** | SQLite 会话持久化（替代 JSONL Storage）| `server/infra/SessionStore.js` |
+| **Tracer** | traceId 链路追踪、诊断事件、日志脱敏、卡死检测 | `server/infra/Tracer.js` |
 
 ---
 
@@ -83,7 +91,7 @@
     └──────────────────────────────────────────────────────────┘
                               │
               ┌───────────────┼───────────────┐
-              │ Promise.all   │               │
+              │ Promise.allSettled            │
               ▼               ▼               ▼
         ┌──────────┐   ┌──────────┐   ┌──────────┐
         │  户部    │   │  兵部    │   │  工部    │
@@ -91,7 +99,7 @@
         └────┬─────┘   └────┬─────┘   └────┬─────┘
              │              │              │
              └──────────────┴──────────────┘
-                              │ 聚合结果
+                              │ 聚合结果（单个失败不阻塞其他）
                               ▼
                        ┌──────────┐
                        │   丞相   │
@@ -111,9 +119,10 @@ Kernel.dispatch() → 手工拼接自然语言 prompt → targetAgent.execute(pr
 
 **新方式（结构化传递）：**
 ```
-Kernel.dispatch(message) → targetAgent.executeAsSubAgent({
-                               from: message.from,        // 保留来源
-                               instruction: message.payload.instruction  // 精确指令
+Kernel.dispatch(message, depth) → targetAgent.executeAsSubAgent({
+                               from: message.from,
+                               instruction: message.payload.instruction,
+                               depth: depth + 1        // 透传派生深度
                            })
                            ↓
                    临时注入 [任务来源：{from}] 上下文
@@ -314,7 +323,7 @@ LLM.chatStream()
 
 ### 7.2 并行批量调度（call_officials）
 
-`call_officials` 技能使用 `Promise.all` 实现真正的并发调度，将 N 个串行任务压缩到单次最长任务的耗时，理论加速比为 N 倍。
+`call_officials` 技能使用 `Promise.allSettled` 实现真正的并发调度，将 N 个串行任务压缩到单次最长任务的耗时，理论加速比为 N 倍。单个官员超时或失败不会阻塞其他官员的结果返回，系统整体鲁棒性更强。
 
 配合 `plan:preview` 事件，前端在并行执行开始前即可展示执行计划，提升用户的感知透明度。
 
@@ -329,6 +338,30 @@ LLM.chatStream()
 ### 7.5 人机协同的"御批"机制
 
 不同于简单的"人在回路"（Human-in-the-Loop），太和系统实现了基于风险等级的动态审批路由：低风险工具自动执行，中高风险工具暂停并请求人工审批，审批结果（含反馈）作为上下文注入 Agent 继续执行，保持了任务的连续性。
+
+### 7.6 派生深度控制（防无限递归）
+
+`Kernel.dispatch()` 携带 `depth` 参数，超过 `MAX_SPAWN_DEPTH=2` 时直接返回错误字符串，阻断潜在的无限递归调用链。depth 通过 skill context 透传，官员调用官员时自动累加。
+
+### 7.7 Dispatch 超时保护
+
+`Kernel.dispatch()` 使用 `Promise.race` + 60s timeout 包装每次子 Agent 调用，防止单个官员卡死导致丞相永久挂起。
+
+### 7.8 上下文安全压缩（保护 tool_call 配对）
+
+`ContextManager.pruneContext()` 采用"安全删除单元"策略：将 `assistant(tool_calls)` 及其所有对应 `tool result` 视为原子组，只整组删除，绝不拆散配对，从根本上消除 400 API 错误。
+
+### 7.9 Session SQLite 持久化
+
+会话历史从 JSONL 文件迁移到 `SessionStore`（better-sqlite3），带索引的 SQLite 查询性能不随文件增长劣化，并天然支持按 agent_id 隔离和原子清空。
+
+### 7.10 结构化可观测性（Tracer）
+
+每次 dispatch 或用户指令生成根 traceId，子 Agent 继承并派生（`parent.depth` 格式）。8种结构化诊断事件（`agent.turn`、`tool.call`、`model.usage`、`dispatch`、`approval.wait`、`agent.stuck`）贯穿全链路，日志脱敏层自动截断 API Key 等敏感字段，3分钟卡死检测兜底。
+
+### 7.11 路由统一化（SocketGateway）
+
+Socket.io 职责从 Kernel 完全剥离到独立的 `SocketGateway`。Kernel 不再持有 `io`，只负责调度逻辑，可独立测试。SocketGateway 在入站时生成 traceId 并注入 `handleCommand()`，实现传输层与调度层的清晰边界。
 
 ---
 

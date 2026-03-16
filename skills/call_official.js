@@ -29,7 +29,7 @@ export default {
         },
         required: ['official_id', 'instruction']
     },
-    handler: async ({ official_id, instruction }, { agent, kernel }) => {
+    handler: async ({ official_id, instruction }, { agent, kernel, depth = 0 }) => {
         console.log(`[Skill:CallOfficial] ${agent.id} calls ${official_id}: ${instruction}`);
 
         // 1. Emit SUMMON event for animation/UI
@@ -53,8 +53,7 @@ export default {
         };
 
         try {
-            // kernel.dispatch returns the result of target agent execution
-            const response = await kernel.dispatch(message);
+            const response = await kernel.dispatch(message, depth);
             if (response && response.error) {
                 return `Error: ${response.error}`;
             }

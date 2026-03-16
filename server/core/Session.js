@@ -16,7 +16,8 @@ export class Session {
         if (!this.memories.has(agentId)) {
             // Load from persistent storage on cache miss
             if (this.storage) {
-                const saved = await this.storage.loadMessages(agentId);
+                // SessionStore.loadMessages is synchronous (better-sqlite3)
+                const saved = this.storage.loadMessages(agentId);
                 // Keep only the most recent MAX_HISTORY entries
                 this.memories.set(agentId, saved.slice(-this.MAX_HISTORY));
             } else {
@@ -47,7 +48,8 @@ export class Session {
 
         // Persist to storage
         if (this.storage) {
-            await this.storage.saveMessage(agentId, msgWithMeta);
+            // SessionStore.saveMessage is synchronous (better-sqlite3)
+            this.storage.saveMessage(agentId, msgWithMeta);
         }
     }
 

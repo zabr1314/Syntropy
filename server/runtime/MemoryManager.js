@@ -73,8 +73,21 @@ export class MemoryManager {
     /**
      * Save a message or snippet to memory
      * Auto-generates embedding if service is available and vector is missing.
+     * Deduplicates: skips save if the last 5 records with the same role have identical content.
      */
     async save(id, content, role, metadata = {}, vector = null) {
+        // Simple dedup: skip if recent same-role record has identical content
+        try {
+            const recent = this.db.prepare(
+                `SELECT content FROM chunks WHERE role = ? ORDER BY created_at DESC LIMIT 5`
+            ).all(role);
+            if (recent.some(r => r.content === content)) {
+                return; // duplicate, skip
+            }
+        } catch (e) {
+            // non-fatal, proceed with save
+        }
+
         let embeddingBlob = null;
         
         // Auto-generate embedding if service available and vector not provided

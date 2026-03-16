@@ -10,6 +10,8 @@ import multer from 'multer'; // Import multer
 // New Core Imports
 import { Kernel } from './core/Kernel.js';
 import { SkillManager } from './runtime/SkillManager.js';
+import { SocketGateway } from './runtime/SocketGateway.js';
+import { SessionStore } from './infra/SessionStore.js';
 import { Storage } from './infra/Storage.js';
 import { Logger } from './infra/Logger.js';
 
@@ -31,15 +33,19 @@ import { ConfigManager } from './runtime/ConfigManager.js';
 
 // 1. Infrastructure
 const storage = new Storage({ path: './data' });
+const sessionStore = new SessionStore('./data/sessions.db');
 const logger = new Logger(storage);
 const configManager = new ConfigManager(); // Initialize Config Manager
 
-// 2. Core Kernel
-const kernel = new Kernel(io, storage);
+// 2. Core Kernel (no longer owns Socket.io)
+const kernel = new Kernel(sessionStore);
 
 // 3. Runtime Services
 const skillManager = new SkillManager();
-kernel.skillManager = skillManager; // Inject dependency
+kernel.skillManager = skillManager;
+
+// 4. Socket Gateway — owns all Socket.io concerns
+const gateway = new SocketGateway(io, kernel);
 
 // 4. Load Skills (Capabilities)
 const skillsDir = path.join(process.cwd(), 'skills');

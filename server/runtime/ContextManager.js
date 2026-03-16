@@ -81,9 +81,13 @@ export class ContextManager {
 
     /**
      * Prune messages to fit within the token limit.
-     * Strategy: Keep System Prompt + Recent Messages. Prune oldest user/assistant pairs.
-     * Always keep the last N messages to maintain immediate context.
-     * 
+     * Identifies "safe deletion units" to avoid splitting tool_call/tool_result pairs.
+     *
+     * Safe units:
+     *   - A single user message (no dependencies)
+     *   - A single assistant message without tool_calls
+     *   - An assistant(tool_calls) message + ALL its corresponding tool results
+     *
      * @param {Array} messages - Full message history including system prompt
      * @param {Array} tools - Tool definitions
      * @param {number} maxTokens - Optional override
@@ -92,7 +96,7 @@ export class ContextManager {
     pruneContext(messages, tools = [], maxTokens = null) {
         const limit = maxTokens || (this.tokenLimit - this.reservedTokens);
         let currentTokens = this.countTotalTokens(messages, tools);
-        
+
         if (currentTokens <= limit) {
             return messages;
         }
@@ -101,35 +105,66 @@ export class ContextManager {
 
         // Deep copy to avoid mutating original
         const pruned = [...messages];
-        
-        // Identify System Prompt (usually first)
-        const systemPrompt = pruned.find(m => m.role === 'system');
-        
-        // We want to keep System Prompt and the very last user message (if possible)
-        // So we remove from the beginning of the "history" part (index 1 onwards)
-        
-        // Simple strategy: Remove messages from index 1 (after system) until it fits.
-        // But we should try to remove pairs (User + Assistant) or tool chains to keep coherence?
-        // For now, simple FIFO removal from the "middle".
-        
+
+        // Index 0 is system prompt — never remove it
+        const startIndex = pruned[0]?.role === 'system' ? 1 : 0;
+
+        // Build safe deletion units from startIndex
+        const buildUnits = (msgs, start) => {
+            const units = [];
+            let i = start;
+            while (i < msgs.length) {
+                const msg = msgs[i];
+                if (msg.role === 'user') {
+                    units.push({ indices: [i] });
+                    i++;
+                } else if (msg.role === 'assistant' && (!msg.tool_calls || msg.tool_calls.length === 0)) {
+                    units.push({ indices: [i] });
+                    i++;
+                } else if (msg.role === 'assistant' && msg.tool_calls?.length > 0) {
+                    // Collect all tool_call_ids from this assistant message
+                    const callIds = new Set(msg.tool_calls.map(tc => tc.id));
+                    const groupIndices = [i];
+                    i++;
+                    // Collect all matching tool results (may not be contiguous in edge cases)
+                    while (i < msgs.length && callIds.size > 0) {
+                        if (msgs[i].role === 'tool' && callIds.has(msgs[i].tool_call_id)) {
+                            callIds.delete(msgs[i].tool_call_id);
+                            groupIndices.push(i);
+                            i++;
+                        } else {
+                            break;
+                        }
+                    }
+                    units.push({ indices: groupIndices });
+                } else {
+                    // tool result without matching assistant (orphan) — skip safely
+                    i++;
+                }
+            }
+            return units;
+        };
+
         let removedCount = 0;
-        // Start checking from index 1 (assuming index 0 is system)
-        // If no system prompt, start from 0.
-        let startIndex = systemPrompt ? 1 : 0;
-        
-        while (currentTokens > limit && pruned.length > startIndex + 1) { // +1 to keep at least one recent msg
-            const removed = pruned.splice(startIndex, 1)[0];
-            currentTokens -= this.estimateTokens(removed);
-            removedCount++;
+        while (currentTokens > limit) {
+            const units = buildUnits(pruned, startIndex);
+            if (units.length === 0) break;
+
+            // Remove the earliest safe unit
+            const unit = units[0];
+            // Remove in reverse index order to preserve positions
+            const sortedIndices = [...unit.indices].sort((a, b) => b - a);
+            for (const idx of sortedIndices) {
+                currentTokens -= this.estimateTokens(pruned[idx]);
+                pruned.splice(idx, 1);
+                removedCount++;
+            }
         }
 
         if (removedCount > 0) {
-            // Insert a placeholder to indicate omitted context? 
-            // Some models might get confused, but for debugging it's useful.
-            // pruned.splice(startIndex, 0, { role: 'system', content: `[...${removedCount} messages pruned...]` });
-            console.log(`[ContextManager] Pruned ${removedCount} messages.`);
+            console.log(`[ContextManager] Pruned ${removedCount} messages (safe-unit strategy).`);
         }
-        
+
         return pruned;
     }
     

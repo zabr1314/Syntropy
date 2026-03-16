@@ -39,7 +39,7 @@ export default {
         },
         required: ['tasks']
     },
-    handler: async ({ tasks }, { agent, kernel }) => {
+    handler: async ({ tasks }, { agent, kernel, depth = 0 }) => {
         console.log(`[Skill:CallOfficials] ${agent.id} dispatching ${tasks.length} tasks in parallel:`, tasks.map(t => t.official_id));
 
         // 1. Emit plan preview event for frontend visualization
@@ -58,8 +58,8 @@ export default {
             });
         }
 
-        // 3. Parallel dispatch via Promise.all
-        const results = await Promise.all(
+        // 3. Parallel dispatch via Promise.allSettled (single failure won't block others)
+        const settled = await Promise.allSettled(
             tasks.map(async (task) => {
                 const message = {
                     from: agent.id,
@@ -68,19 +68,19 @@ export default {
                     action: 'execute_task',
                     payload: { instruction: task.instruction }
                 };
-                try {
-                    const response = await kernel.dispatch(message);
-                    if (response && response.error) {
-                        return `[${task.official_id}] 错误: ${response.error}`;
-                    }
-                    return `[来自 ${task.official_id} 的回报]:\n${response}`;
-                } catch (error) {
-                    return `[${task.official_id}] 通信错误: ${error.message}`;
+                const response = await kernel.dispatch(message, depth);
+                if (response && response.error) {
+                    throw new Error(response.error);
                 }
+                return `[来自 ${task.official_id} 的回报]:\n${response}`;
             })
         );
 
         // 4. Aggregate all results
-        return results.join('\n\n---\n\n');
+        return settled.map((r, i) =>
+            r.status === 'fulfilled'
+                ? r.value
+                : `[${tasks[i].official_id}] 未能回报: ${r.reason?.message}`
+        ).join('\n\n---\n\n');
     }
 };

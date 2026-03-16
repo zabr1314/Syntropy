@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
+import { tracer } from '../infra/Tracer.js';
 
 dotenv.config();
 
@@ -49,8 +50,12 @@ export class LLM {
      * Calls onChunk(chunk) for each text delta, returns the assembled message.
      * @param {Object} params
      * @param {Function} params.onChunk - Callback invoked with each text chunk string
+     * @param {string} params.traceId  - Optional trace ID for observability
+     * @param {string} params.agentId  - Optional agent ID for observability
      */
-    async chatStream({ systemPrompt, history, tools = [], model = null, onChunk }) {
+    async chatStream({ systemPrompt, history, tools = [], model = null, onChunk, traceId, agentId }) {
+        const t0 = Date.now();
+        const activeModel = model || this.defaultModel;
         try {
             const messages = [
                 { role: 'system', content: systemPrompt },
@@ -58,36 +63,49 @@ export class LLM {
             ];
 
             const stream = await this.client.chat.completions.create({
-                model: model || this.defaultModel,
+                model: activeModel,
                 messages,
                 tools: tools.length > 0 ? tools : undefined,
                 stream: true,
+                stream_options: { include_usage: true }
             });
 
             let fullContent = '';
             const toolCallsMap = {};
+            let usage = null;
 
             for await (const chunk of stream) {
                 const delta = chunk.choices[0]?.delta;
-                if (!delta) continue;
+                if (delta) {
+                    if (delta.content) {
+                        fullContent += delta.content;
+                        if (onChunk) onChunk(delta.content);
+                    }
 
-                if (delta.content) {
-                    fullContent += delta.content;
-                    if (onChunk) onChunk(delta.content);
-                }
-
-                // Accumulate streamed tool call fragments
-                if (delta.tool_calls) {
-                    for (const tc of delta.tool_calls) {
-                        const idx = tc.index;
-                        if (!toolCallsMap[idx]) {
-                            toolCallsMap[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
+                    if (delta.tool_calls) {
+                        for (const tc of delta.tool_calls) {
+                            const idx = tc.index;
+                            if (!toolCallsMap[idx]) {
+                                toolCallsMap[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
+                            }
+                            if (tc.id) toolCallsMap[idx].id = tc.id;
+                            if (tc.function?.name) toolCallsMap[idx].function.name += tc.function.name;
+                            if (tc.function?.arguments) toolCallsMap[idx].function.arguments += tc.function.arguments;
                         }
-                        if (tc.id) toolCallsMap[idx].id = tc.id;
-                        if (tc.function?.name) toolCallsMap[idx].function.name += tc.function.name;
-                        if (tc.function?.arguments) toolCallsMap[idx].function.arguments += tc.function.arguments;
                     }
                 }
+                // stream_options usage arrives in the final chunk
+                if (chunk.usage) usage = chunk.usage;
+            }
+
+            // Emit model.usage diagnostic event
+            if (traceId || agentId) {
+                tracer.modelUsage(agentId || 'unknown', traceId || 'unknown', {
+                    model: activeModel,
+                    promptTokens: usage?.prompt_tokens ?? null,
+                    completionTokens: usage?.completion_tokens ?? null,
+                    durationMs: Date.now() - t0
+                });
             }
 
             const tool_calls = Object.values(toolCallsMap);
