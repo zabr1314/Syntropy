@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import Phaser from 'phaser';
 import { MainScene } from '../game/MainScene';
-import { LiveAgentService } from '../services/LiveAgentService';
 
 const GameContainer: React.FC = () => {
   const gameRef = useRef<Phaser.Game | null>(null);
@@ -39,17 +38,12 @@ const GameContainer: React.FC = () => {
     };
 
     gameRef.current = new Phaser.Game(config);
-    
-    // 启动实时代理服务，接入 OpenClaw 数据
-    LiveAgentService.getInstance().start();
-    
+
+    // LiveAgentService 由 App.tsx 统一管理生命周期，此处不再重复启动
     // 原有的随机事件管理器暂时停用，避免冲突
     // GameEventManager.getInstance().start();
 
     return () => {
-      // 停止服务
-      LiveAgentService.getInstance().stop();
-      
       if (gameRef.current) {
         gameRef.current.destroy(true);
         gameRef.current = null;

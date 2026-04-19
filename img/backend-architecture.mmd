@@ -1,0 +1,57 @@
+graph TB
+    subgraph "Socket.io Gateway"
+        Socket[WebSocket 双向通信]
+    end
+    
+    subgraph "Kernel (内核层)"
+        K1[Agent生命周期管理]
+        K2[状态机调度]
+        K3[风险拦截器]
+    end
+    
+    subgraph "Agent Runtime (执行层)"
+        A1[Minister - 丞相]
+        A2[户部尚书]
+        A3[兵部尚书]
+        A4[工部尚书]
+        A5[其他六部]
+    end
+    
+    subgraph "基础设施层"
+        M1[MemoryManager<br/>FTS5 + Vector + RRF]
+        M2[Tracer<br/>全链路追踪]
+        M3[LLM Provider<br/>OpenAI / DeepSeek]
+        M4[SQLite DB]
+    end
+    
+    Socket --> K1
+    K1 --> K2
+    K2 --> K3
+    K3 --> A1
+    K3 --> A2
+    K3 --> A3
+    K3 --> A4
+    K3 --> A5
+    
+    A1 --> M1
+    A2 --> M1
+    A3 --> M1
+    A1 --> M2
+    A2 --> M2
+    A1 --> M3
+    A2 --> M3
+    M1 --> M4
+    
+    style Socket fill:#fff4e6,stroke:#333,stroke-width:2px
+    style K1 fill:#e1f5ff,stroke:#333,stroke-width:2px
+    style K2 fill:#e1f5ff,stroke:#333,stroke-width:2px
+    style K3 fill:#e1f5ff,stroke:#333,stroke-width:2px
+    style A1 fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style A2 fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style A3 fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style A4 fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style A5 fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style M1 fill:#f0f0f0,stroke:#333,stroke-width:2px
+    style M2 fill:#f0f0f0,stroke:#333,stroke-width:2px
+    style M3 fill:#f0f0f0,stroke:#333,stroke-width:2px
+    style M4 fill:#f0f0f0,stroke:#333,stroke-width:2px

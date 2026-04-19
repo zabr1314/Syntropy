@@ -1,0 +1,39 @@
+stateDiagram-v2
+    [*] --> INITIALIZING: 启动
+    INITIALIZING --> IDLE: 加载完成
+    
+    IDLE --> THINKING: 收到指令
+    THINKING --> ACTING: LLM返回工具调用
+    THINKING --> IDLE: LLM直接回复
+    ACTING --> WAITING_FOR_HUMAN: 高风险操作
+    ACTING --> THINKING: 执行完成继续推理
+    ACTING --> IDLE: 所有工具执行完成
+    WAITING_FOR_HUMAN --> ACTING: 御批通过
+    WAITING_FOR_HUMAN --> ERROR: 御批驳回
+    
+    THINKING --> ERROR: LLM报错
+    ACTING --> ERROR: 工具执行失败
+    ERROR --> IDLE: 错误恢复
+    
+    IDLE --> SLEEPING: 空闲超时
+    SLEEPING --> IDLE: 收到新指令
+    
+    note right of THINKING
+      LLM推理中
+      小人踱步思考
+    end note
+    
+    note right of ACTING
+      执行工具
+      小人移动至工位
+    end note
+    
+    note right of WAITING_FOR_HUMAN
+      等待御批
+      小人关进天牢
+    end note
+    
+    note right of ERROR
+      出错
+      小人倒地
+    end note

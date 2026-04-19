@@ -1,0 +1,37 @@
+graph TB
+    subgraph "Zustand Store<br/>(Single Source of Truth)"
+        S[Agent 状态 / 位置 / 动作 / 思考内容]
+    end
+    
+    subgraph "React UI 层<br/>(文官系统)"
+        R1[奏折面板]
+        R2[记忆库]
+        R3[官员状态 HUD]
+        R4[御批弹窗]
+    end
+    
+    subgraph "Phaser 渲染层<br/>(武将系统)"
+        P1[2D 像素沙盘]
+        P2[角色动画]
+        P3[寻路算法]
+        P4[碰撞检测]
+    end
+    
+    S -->|订阅状态| R1
+    S -->|订阅状态| R2
+    S -->|订阅状态| R3
+    S -->|订阅状态| R4
+    S -->|update循环读取| P1
+    S -->|update循环读取| P2
+    S -->|update循环读取| P3
+    S -->|update循环读取| P4
+    
+    style S fill:#e1f5ff,stroke:#333,stroke-width:2px
+    style R1 fill:#fff4e6,stroke:#333,stroke-width:2px
+    style R2 fill:#fff4e6,stroke:#333,stroke-width:2px
+    style R3 fill:#fff4e6,stroke:#333,stroke-width:2px
+    style R4 fill:#fff4e6,stroke:#333,stroke-width:2px
+    style P1 fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style P2 fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style P3 fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style P4 fill:#ffe6e6,stroke:#333,stroke-width:2px

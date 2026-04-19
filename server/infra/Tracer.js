@@ -118,6 +118,39 @@ export class Tracer {
         this.emit('approval.wait', { agentId, traceId, toolName });
     }
 
+    // ── Decision Trace events ────────────────────────────────────────────────
+
+    /** Call when an agent makes a routing decision */
+    decisionMade(agentId, traceId, decision) {
+        this.emit('decision.made', {
+            agentId,
+            traceId,
+            decisionId: decision.decisionId || `${traceId}-${Date.now()}`,
+            timestamp: decision.timestamp || Date.now(),
+            chosen: decision.chosen,
+            instruction: decision.instruction,
+            reasoning: decision.reasoning,
+            alternatives: decision.alternatives || [],
+            whyNot: decision.whyNot || '',
+            confidence: decision.confidence || 50,
+            evidenceMemoryIds: decision.evidenceMemoryIds || []
+        });
+    }
+
+    /** Call when an agent produces output */
+    decisionOutput(agentId, traceId, output) {
+        this.emit('decision.output', {
+            agentId,
+            traceId,
+            decisionId: output.decisionId || `${traceId}-${Date.now()}`,
+            timestamp: output.timestamp || Date.now(),
+            output: output.output,
+            outputSummary: output.outputSummary,
+            tokenUsed: output.tokenUsed,
+            durationMs: output.durationMs
+        });
+    }
+
     // ── Stuck detection ──────────────────────────────────────────────────────
 
     _checkStuck() {

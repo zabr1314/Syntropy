@@ -3,6 +3,30 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 
 export type DecreeStatus = 'drafting' | 'planning' | 'reviewing' | 'approved' | 'rejected' | 'executing' | 'completed' | 'paused' | 'cancelled';
 
+export interface DecisionNode {
+  id: string;                    // 节点ID
+  agentId: string;               // 执行者（minister/revenue/...）
+  action: string;                // "调度户部" / "执行财务分析"
+  reasoning: string;             // "用户问题涉及财务统计"
+  timestamp: number;
+
+  // 决策依据
+  alternatives?: string[];       // ["works", "justice"]
+  whyNot?: string;               // "工部偏工程，刑部偏合规"
+  evidenceMemoryIds?: string[];  // ["mem_abc", "mem_def"]
+  confidence?: number;           // 0-100
+
+  // 执行结果
+  output?: string;               // 该节点的实际输出
+  outputSummary?: string;        // 输出摘要（前200字）
+  tokenUsed?: number;
+  durationMs?: number;
+
+  // 树结构
+  children?: DecisionNode[];     // 子决策
+  parentId?: string;
+}
+
 export interface Decree {
   id: string;
   title: string;
@@ -18,6 +42,7 @@ export interface Decree {
   assignedMinistry?: string;
   previousStatus?: DecreeStatus;
   logs: DecreeLog[];
+  decisionTree?: DecisionNode;   // 决策树根节点
 }
 
 export interface DecreeLog {
@@ -30,7 +55,7 @@ export interface DecreeLog {
 export interface CourtState {
   decrees: Decree[];
   activeDecreeId: string | null;
-  
+
   // Actions
   addDecree: (content: string) => string;
   updateDecreeStatus: (id: string, status: DecreeStatus, feedback?: string) => void;
@@ -45,7 +70,9 @@ export interface CourtState {
   cancelDecree: (id: string) => void;
   clearCompletedDecrees: () => void;
   getDecree: (id: string) => Decree | undefined;
-  
+  addDecisionNode: (decreeId: string, node: DecisionNode) => void;
+  updateDecisionOutput: (decreeId: string, nodeId: string, output: string, outputSummary: string, durationMs: number) => void;
+
   // Input State
   draftInput: string;
   setDraftInput: (input: string) => void;
@@ -217,7 +244,38 @@ export const useCourtStore = create<CourtState>()(
 
       setDraftInput: (input) => set({ draftInput: input }),
 
-      getDecree: (id) => get().decrees.find(d => d.id === id)
+      getDecree: (id) => get().decrees.find(d => d.id === id),
+
+      addDecisionNode: (decreeId, node) => {
+        set((state) => ({
+          decrees: state.decrees.map(d => {
+            if (d.id !== decreeId) return d;
+            if (!d.decisionTree) {
+              // node is already the root (with children pre-attached)
+              return { ...d, decisionTree: node };
+            }
+            // root exists — append node as child of root
+            const root = { ...d.decisionTree };
+            root.children = [...(root.children || []), { ...node, children: node.children || [] }];
+            return { ...d, decisionTree: root };
+          })
+        }));
+      },
+
+      updateDecisionOutput: (decreeId, nodeId, output, outputSummary, durationMs) => {
+        set((state) => ({
+          decrees: state.decrees.map(d => {
+            if (d.id !== decreeId || !d.decisionTree) return d;
+            const updateNode = (node: DecisionNode): DecisionNode => {
+              if (node.id === nodeId) {
+                return { ...node, output, outputSummary, durationMs };
+              }
+              return { ...node, children: node.children?.map(updateNode) };
+            };
+            return { ...d, decisionTree: updateNode(d.decisionTree) };
+          })
+        }));
+      }
     }),
     {
       name: 'court-storage', // unique name

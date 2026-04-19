@@ -22,3 +22,16 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.env
+.env.local
+data/*.db
+data/*.jsonl
+data/*.db-journal
+data/sessions.db
+*.pid
+frontend.log
+openclaw/
+openclaw-studio/
+openclaw_core_docs/
+.DS_Store
+data/

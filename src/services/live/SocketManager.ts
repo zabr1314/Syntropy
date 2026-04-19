@@ -1,5 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { useAgentStore, type ApprovalRequest } from '../../store/useAgentStore';
+import { useCourtStore, type DecisionNode } from '../../store/useCourtStore';
+import { BACKEND_ID_MAPPING } from '../../constants/agentConfig';
 
 type AgentUpdateCallback = (data: { id: string, status: string, message: string }) => void;
 type AgentOfflineCallback = (data: { id: string }) => void;
@@ -21,7 +23,11 @@ export class SocketManager {
         this.onStreamChunk = onChunk;
         this.onPlanPreview = onPlanPreview;
 
-        this.socket = io(this.relayUrl);
+        this.socket = io(this.relayUrl, {
+            transports: ['websocket', 'polling'],
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000
+        });
 
         this.socket.on('connect', () => {
             console.log('[SocketManager] Connected to Relay Server');
@@ -66,6 +72,68 @@ export class SocketManager {
         this.socket.on('plan_preview', (data: { from: string, tasks: Array<{ official_id: string, instruction: string }> }) => {
             console.log('[SocketManager] Plan Preview:', data);
             if (this.onPlanPreview) this.onPlanPreview(data);
+        });
+
+        // 监听决策树事件
+        this.socket.on('decision_made', (data: {
+            traceId: string, decisionId: string, agentId: string, timestamp: number,
+            chosen: string, instruction: string, reasoning: string,
+            alternatives: string[], whyNot: string, confidence: number
+        }) => {
+            const { addDecisionNode, activeDecreeId, decrees } = useCourtStore.getState();
+            const targetDecreeId = activeDecreeId || decrees.find(d =>
+                d.status === 'executing' || d.status === 'drafting' || d.status === 'planning'
+            )?.id;
+            console.log('[SocketManager] decision_made received, targetDecreeId:', targetDecreeId, 'activeDecreeId:', activeDecreeId, 'decrees statuses:', decrees.map(d => d.status));
+            if (!targetDecreeId) return;
+
+            const frontendAgentId = BACKEND_ID_MAPPING[data.agentId] || data.agentId;
+            const chosenFrontendId = BACKEND_ID_MAPPING[data.chosen] || data.chosen;
+
+            // minister 是 root，chosen official 是 child
+            // child 节点用 decisionId 作为 id，agentId 是 chosen official
+            const childNode: DecisionNode = {
+                id: data.decisionId,
+                agentId: chosenFrontendId,
+                action: `执行任务`,
+                reasoning: data.reasoning,
+                timestamp: data.timestamp,
+                alternatives: data.alternatives.map((a: string) => BACKEND_ID_MAPPING[a] || a),
+                whyNot: data.whyNot,
+                confidence: data.confidence,
+                parentId: frontendAgentId,
+                children: []
+            };
+
+            const decree = decrees.find(d => d.id === targetDecreeId);
+            if (!decree?.decisionTree) {
+                // 还没有 root，先创建 minister root 节点，再把 child 挂上去
+                const rootNode: DecisionNode = {
+                    id: `root-${data.traceId}`,
+                    agentId: frontendAgentId,
+                    action: '拆解任务并调度',
+                    reasoning: '统筹全局，分配各部',
+                    timestamp: data.timestamp,
+                    children: [childNode]
+                };
+                addDecisionNode(targetDecreeId, rootNode);
+            } else {
+                // root 已存在，直接追加 child
+                addDecisionNode(targetDecreeId, childNode);
+            }
+        });
+
+        this.socket.on('decision_output', (data: {
+            traceId: string, decisionId: string, agentId: string, timestamp: number,
+            output: string, outputSummary: string, durationMs: number
+        }) => {
+            const { updateDecisionOutput, activeDecreeId, decrees } = useCourtStore.getState();
+            const targetDecreeId = activeDecreeId || decrees.find(d =>
+                d.status === 'executing' || d.status === 'drafting' || d.status === 'planning'
+            )?.id;
+            if (!targetDecreeId) return;
+
+            updateDecisionOutput(targetDecreeId, data.decisionId, data.output, data.outputSummary, data.durationMs);
         });
     }
 

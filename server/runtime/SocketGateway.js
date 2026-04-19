@@ -67,6 +67,17 @@ export class SocketGateway {
             console.log(`[Gateway] → plan_preview from ${data.from}`);
             this._emit('plan_preview', data);
         });
+
+        // Decision Trace events
+        bus.subscribe('decision:made', (data) => {
+            console.log(`[Gateway] → decision_made by ${data.agentId}`);
+            this._emit('decision_made', data);
+        });
+
+        bus.subscribe('decision:output', (data) => {
+            console.log(`[Gateway] → decision_output from ${data.agentId}`);
+            this._emit('decision_output', data);
+        });
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -1,0 +1,27 @@
+graph TD
+    A[皇帝指令:<br/>查Q1营收并对比去年] --> B[丞相: 接收指令]
+    B --> C[丞相: 拆解任务]
+    
+    C --> D[调度户部尚书]
+    C --> E[调度史官]
+    
+    D --> F[户部: 查询SQLite]
+    F --> G[户部返回:<br/>Q1营收1000万]
+    
+    E --> H[史官: 检索去年Q1记录]
+    H --> I[史官返回:<br/>去年Q1营收800万]
+    
+    G --> J[丞相: 汇总对比]
+    I --> J
+    
+    J --> K[丞相复命:<br/>今年Q1营收1000万<br/>同比增长25%]
+    
+    style A fill:#fff4e6,stroke:#333,stroke-width:2px
+    style B fill:#e1f5ff,stroke:#333,stroke-width:2px
+    style C fill:#e1f5ff,stroke:#333,stroke-width:2px
+    style D fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style E fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style F fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style H fill:#ffe6e6,stroke:#333,stroke-width:2px
+    style J fill:#e1f5ff,stroke:#333,stroke-width:2px
+    style K fill:#fff4e6,stroke:#333,stroke-width:2px

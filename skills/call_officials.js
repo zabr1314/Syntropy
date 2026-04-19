@@ -31,15 +31,25 @@ export default {
                         instruction: {
                             type: 'string',
                             description: 'Specific instruction for the official'
+                        },
+                        reasoning: {
+                            type: 'string',
+                            description: 'Why you chose this official for this task'
+                        },
+                        confidence: {
+                            type: 'number',
+                            minimum: 0,
+                            maximum: 100,
+                            description: 'Your confidence in this decision (0-100)'
                         }
                     },
-                    required: ['official_id', 'instruction']
+                    required: ['official_id', 'instruction', 'reasoning']
                 }
             }
         },
         required: ['tasks']
     },
-    handler: async ({ tasks }, { agent, kernel, depth = 0 }) => {
+    handler: async ({ tasks }, { agent, kernel, depth = 0, traceId }) => {
         console.log(`[Skill:CallOfficials] ${agent.id} dispatching ${tasks.length} tasks in parallel:`, tasks.map(t => t.official_id));
 
         // 1. Emit plan preview event for frontend visualization
@@ -48,7 +58,25 @@ export default {
             tasks: tasks.map(t => ({ official_id: t.official_id, instruction: t.instruction }))
         });
 
-        // 2. Emit SUMMON events for each official (UI animation)
+        // 2. Emit decision:made for each task (Decision Trace)
+        const decisionIds = tasks.map(task => {
+            const decisionId = `${traceId}-${task.official_id}-${Date.now()}`;
+            kernel.events.publish('decision:made', {
+                traceId,
+                decisionId,
+                agentId: agent.id,
+                timestamp: Date.now(),
+                chosen: task.official_id,
+                instruction: task.instruction,
+                reasoning: task.reasoning || 'No reasoning provided',
+                alternatives: [],
+                whyNot: '',
+                confidence: task.confidence || 50
+            });
+            return decisionId;
+        });
+
+        // 3. Emit SUMMON events for each official (UI animation)
         for (const task of tasks) {
             kernel.events.publish('agent:status', {
                 id: agent.id,
@@ -58,9 +86,10 @@ export default {
             });
         }
 
-        // 3. Parallel dispatch via Promise.allSettled (single failure won't block others)
+        // 4. Parallel dispatch via Promise.allSettled
         const settled = await Promise.allSettled(
-            tasks.map(async (task) => {
+            tasks.map(async (task, i) => {
+                const decisionId = decisionIds[i];
                 const message = {
                     from: agent.id,
                     to: task.official_id,
@@ -68,15 +97,27 @@ export default {
                     action: 'execute_task',
                     payload: { instruction: task.instruction }
                 };
-                const response = await kernel.dispatch(message, depth);
-                if (response && response.error) {
-                    throw new Error(response.error);
-                }
+                const startTime = Date.now();
+                const response = await kernel.dispatch(message, depth, traceId);
+                const durationMs = Date.now() - startTime;
+
+                // Emit output event with same decisionId
+                kernel.events.publish('decision:output', {
+                    traceId,
+                    decisionId,
+                    agentId: task.official_id,
+                    timestamp: Date.now(),
+                    output: response,
+                    outputSummary: typeof response === 'string' ? response.substring(0, 200) : JSON.stringify(response).substring(0, 200),
+                    durationMs
+                });
+
+                if (response && response.error) throw new Error(response.error);
                 return `[来自 ${task.official_id} 的回报]:\n${response}`;
             })
         );
 
-        // 4. Aggregate all results
+        // 5. Aggregate all results
         return settled.map((r, i) =>
             r.status === 'fulfilled'
                 ? r.value

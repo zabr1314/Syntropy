@@ -23,6 +23,9 @@ export class LiveAgentService {
   // Stream buffering: accumulate chunks per agent, write one clean log entry on idle
   private streamBuffers: Record<string, string> = {};
 
+  // Decree completion debounce: wait 2s after minister goes idle before marking decree as completed
+  private completionTimer: ReturnType<typeof setTimeout> | null = null;
+
   private constructor() {
       this.socketManager = new SocketManager();
       this.messageProcessor = new MessageProcessor();
@@ -75,6 +78,10 @@ export class LiveAgentService {
   public stop() {
     this.isRunning = false;
     this.socketManager.disconnect();
+    if (this.completionTimer) {
+        clearTimeout(this.completionTimer);
+        this.completionTimer = null;
+    }
     console.log('LiveAgentService stopped');
   }
 
@@ -302,6 +309,12 @@ export class LiveAgentService {
 
       // Mark decree as executing when any agent starts working
       if (status === 'working') {
+          // Cancel any pending completion timer when work resumes
+          if (this.completionTimer) {
+              clearTimeout(this.completionTimer);
+              this.completionTimer = null;
+          }
+
           const activeId = activeDecreeId || decrees.find(d => d.status === 'drafting' || d.status === 'planning')?.id;
           if (activeId) {
                const decree = decrees.find(d => d.id === activeId);
@@ -314,22 +327,31 @@ export class LiveAgentService {
           }
       }
 
-      // Auto-complete decree only when the minister (orchestrator) finishes
+      // Auto-complete decree with debounce: wait 2s after minister goes idle
       if (status === 'idle' && prevStatus === 'working' && frontendId === 'minister') {
-          const executingDecree = activeDecreeId
-              ? decrees.find(d => d.id === activeDecreeId)
-              : decrees.find(d => d.status === 'executing');
+          // Cancel any existing timer
+          if (this.completionTimer) {
+              clearTimeout(this.completionTimer);
+          }
 
-          if (executingDecree) {
-              const hasLogs = executingDecree.logs.some(l => l.actor !== 'Emperor' && l.actor !== 'System');
-              if (hasLogs) {
-                  console.log(`[LiveAgent] Auto-completing decree ${executingDecree.id}`);
-                  updateDecreeStatus(executingDecree.id, 'completed');
-                  if (activeDecreeId === executingDecree.id) {
-                      useCourtStore.getState().setActiveDecree(null);
+          // Set new timer: complete decree after 2s if minister stays idle
+          this.completionTimer = setTimeout(() => {
+              const executingDecree = activeDecreeId
+                  ? decrees.find(d => d.id === activeDecreeId)
+                  : decrees.find(d => d.status === 'executing');
+
+              if (executingDecree) {
+                  const hasLogs = executingDecree.logs.some(l => l.actor !== 'Emperor' && l.actor !== 'System');
+                  if (hasLogs) {
+                      console.log(`[LiveAgent] Auto-completing decree ${executingDecree.id} (after 2s debounce)`);
+                      updateDecreeStatus(executingDecree.id, 'completed');
+                      if (activeDecreeId === executingDecree.id) {
+                          useCourtStore.getState().setActiveDecree(null);
+                      }
                   }
               }
-          }
+              this.completionTimer = null;
+          }, 2000);
       }
   }
 }

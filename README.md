@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License" />
   <img src="https://img.shields.io/badge/Status-Beta-blue.svg" alt="Status" />
-  <img src="https://img.shields.io/badge/Version-v2.4-brightgreen.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-v2.5-brightgreen.svg" alt="Version" />
   <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React" />
   <img src="https://img.shields.io/badge/Node.js-18+-339933.svg" alt="Node.js" />
   <img src="https://img.shields.io/badge/Engine-Phaser%203-aa241f.svg" alt="Phaser 3" />
